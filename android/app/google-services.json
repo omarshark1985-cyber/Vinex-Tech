@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "544250708114",
+    "project_id": "vinex-storage85",
+    "storage_bucket": "vinex-storage85.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:544250708114:android:b709b505bb8b0a4ab8e64b",
+        "android_client_info": {
+          "package_name": "com.stockmaster.inventory"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCfQ9n3BZv0mniiWyZ9ELhAs7OqJB0a6UE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

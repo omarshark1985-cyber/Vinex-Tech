@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Vinex Technology - Inventory Management">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Vinex Technology">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>Vinex Technology</title>
+  <link rel="manifest" href="manifest.json">
+
+  <script>
+    /*
+     * STRATEGY (v4 - FULLY LOCAL, NO CDN DEPENDENCY):
+     * Both firebase-app.js and firebase-firestore.js are served locally.
+     * firebase-firestore.js has been patched to import from './firebase-app.js'
+     * instead of the gstatic CDN, making the app 100% independent of external URLs.
+     *
+     * firebase_core_web checks:
+     *   if (window.firebase_core != null) return; // skip its own loading
+     *   if (window.firebase_firestore != null) return; // skip its own loading
+     */
+    window._firebaseReady = (async function() {
+      try {
+        // Step 1: Load firebase-app.js locally (self-contained, no external imports)
+        const firebaseApp = await import('./firebase/firebase-app.js');
+        window.firebase_core = firebaseApp;
+        console.log('[Firebase] ✅ firebase_core loaded locally');
+
+        // Step 2: Load firebase-firestore.js locally
+        // (patched to import firebase-app from local path, not gstatic CDN)
+        const firebaseFirestore = await import('./firebase/firebase-firestore.js');
+        window.firebase_firestore = firebaseFirestore;
+        console.log('[Firebase] ✅ firebase_firestore loaded locally');
+
+        // Step 3: Pre-initialize the Firebase app before Flutter starts
+        const apps = firebaseApp.getApps();
+        if (apps.length === 0) {
+          firebaseApp.initializeApp({
+            apiKey:            "AIzaSyCfQ9n3BZv0mniiWyZ9ELhAs7OqJB0a6UE",
+            authDomain:        "vinex-storage85.firebaseapp.com",
+            projectId:         "vinex-storage85",
+            storageBucket:     "vinex-storage85.firebasestorage.app",
+            messagingSenderId: "544250708114",
+            appId:             "1:544250708114:web:b709b505bb8b0a4ab8e64b",
+            databaseURL:       "https://vinex-storage85-default-rtdb.firebaseio.com"
+          });
+          console.log('[Firebase] ✅ App pre-initialized');
+        }
+        console.log('[Firebase] ✅ All modules ready — starting Flutter');
+        return true;
+      } catch(e) {
+        console.warn('[Firebase] ⚠️ Local load error:', e.message, e);
+        // Don't block Flutter — firebase_core_web will handle fallback loading
+        return false;
+      }
+    })();
+  </script>
+
+  <script>
+    function _printInvoiceHtml(html) {
+      var win = window.open('', '_blank', 'width=900,height=700');
+      if (!win) { window.print(); return; }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.onload = function() {
+        win.focus();
+        win.print();
+        win.onafterprint = function() { win.close(); };
+      };
+    }
+  </script>
+</head>
+<body>
+  <!--
+    Start Flutter only after Firebase modules are ready.
+    This guarantees window.firebase_core != null when flutter_bootstrap.js runs.
+  -->
+  <script>
+    window._firebaseReady.then(function(ok) {
+      console.log('[Flutter] Starting app, firebase pre-loaded:', ok);
+      var s = document.createElement('script');
+      s.src = 'flutter_bootstrap.js';
+      s.async = true;
+      document.body.appendChild(s);
+    });
+  </script>
+</body>
+</html>
