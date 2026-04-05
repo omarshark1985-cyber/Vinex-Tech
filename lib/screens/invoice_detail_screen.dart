@@ -5,12 +5,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:uuid/uuid.dart';
 import 'dart:convert' show base64Encode;
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import '../utils/js_helper.dart';
 import '../utils/responsive.dart';
@@ -20,9 +17,6 @@ import '../models/inventory_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/currency_helper.dart';
-// Mobile-only imports
-import 'package:permission_handler/permission_handler.dart';
-import 'package:gal/gal.dart';
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -267,11 +261,10 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     try {
       final invNum     = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
       final dateStr    = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
-      final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
 
       // التقاط A4 كاملة بدقة 3× خارج الشاشة
       final bytes = await _captureFullA4(
-        invNum: invNum, dateStr: dateStr, printedStr: printedStr,
+        invNum: invNum, dateStr: dateStr,
       );
       if (mounted) setState(() { _generatedBytes = bytes; _exportState = _ExportState.ready; });
     } catch (e) {
@@ -464,7 +457,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     final invoice    = widget.invoice;
     final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
     final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-    final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
 
     return Scaffold(
       backgroundColor: const Color(0xFFD0D0D0),
@@ -529,7 +521,7 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
             key: _invoiceKey,
             child: SizedBox(width: _kA4W, child: _A4InvoicePage(
               invoice: invoice, invNum: invNum,
-              dateStr: dateStr, printedStr: printedStr,
+              dateStr: dateStr,
             )),
           )),
         )),
@@ -544,7 +536,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     final invoice    = widget.invoice;
     final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
     final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-    final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
 
     // حساب الـ scale بحيث تملأ صفحة A4 العرض المتاح
     final screenW = MediaQuery.of(context).size.width;
@@ -616,7 +607,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
                                   invoice: invoice,
                                   invNum: invNum,
                                   dateStr: dateStr,
-                                  printedStr: printedStr,
                                 ),
                               ),
                             ),
@@ -800,7 +790,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   Future<Uint8List> _captureFullA4({
     required String invNum,
     required String dateStr,
-    required String printedStr,
   }) async {
     // أنشئ RepaintBoundary خارج الشاشة داخل OverlayEntry مؤقت
     final completer = Completer<Uint8List>();
@@ -820,7 +809,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
               invoice: widget.invoice,
               invNum: invNum,
               dateStr: dateStr,
-              printedStr: printedStr,
             ),
           ),
         ),
@@ -1056,13 +1044,11 @@ class _A4InvoicePage extends StatelessWidget {
   final Invoice invoice;
   final String invNum;
   final String dateStr;
-  final String printedStr;
 
   const _A4InvoicePage({
     required this.invoice,
     required this.invNum,
     required this.dateStr,
-    required this.printedStr,
   });
 
   @override

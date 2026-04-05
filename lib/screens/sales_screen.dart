@@ -1066,17 +1066,6 @@ class _InvoiceFormSheet extends StatefulWidget {
   State<_InvoiceFormSheet> createState() => _InvoiceFormSheetState();
 }
 
-// keep InvoiceFormScreen as alias for backward compat
-class InvoiceFormScreen extends StatefulWidget {
-  const InvoiceFormScreen({super.key});
-  @override
-  State<InvoiceFormScreen> createState() => _InvoiceFormScreenState();
-}
-class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
-  @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
-}
-
 class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
   final _formKey = GlobalKey<FormState>();
   final _customerCtrl = TextEditingController();

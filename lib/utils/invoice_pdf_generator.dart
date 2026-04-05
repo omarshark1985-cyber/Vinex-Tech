@@ -27,7 +27,6 @@ class InvoicePdfGenerator {
   static const PdfColor _rowEven     = PdfColor.fromInt(0xFFF0F4FF);
   static const PdfColor _notesBg     = PdfColor.fromInt(0xFFFFFDE7);
   static const PdfColor _notesBorder = PdfColor.fromInt(0xFFFFECB3);
-  static const PdfColor _yellow      = PdfColor.fromInt(0xFF000000); // total amount text — black bold
   static const PdfColor _footerText  = PdfColor.fromInt(0xFF94A3B8);
   static const PdfColor _footerBlue  = PdfColor.fromInt(0xFF2563EB);
 
@@ -44,7 +43,6 @@ class InvoicePdfGenerator {
 
     final invNum    = invoice.invoiceNumber.toString().padLeft(4, '0');
     final dateStr   = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-    final printedStr = DateFormat('MMM dd, yyyy – hh:mm a').format(DateTime.now());
 
     final pdf = pw.Document();
     pdf.addPage(
@@ -55,7 +53,7 @@ class InvoicePdfGenerator {
           _buildHeader(logo, invNum),
           pw.Padding(
             padding: const pw.EdgeInsets.fromLTRB(40, 24, 40, 0),
-            child: _buildInfoRow(invoice, invNum, dateStr, printedStr),
+            child: _buildInfoRow(invoice, invNum, dateStr),
           ),
           pw.Padding(
             padding: const pw.EdgeInsets.fromLTRB(40, 24, 40, 0),
@@ -186,7 +184,7 @@ class InvoicePdfGenerator {
 
   // ── INFO ROW ──────────────────────────────────────────────────────────────
   static pw.Widget _buildInfoRow(
-      Invoice invoice, String invNum, String dateStr, String printedStr) {
+      Invoice invoice, String invNum, String dateStr) {
     return pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
