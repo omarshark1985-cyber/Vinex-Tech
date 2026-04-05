@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -7,6 +9,9 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:uuid/uuid.dart';
 import 'dart:convert' show base64Encode;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:path_provider/path_provider.dart';
 import '../utils/js_helper.dart';
 import '../utils/responsive.dart';
 import '../models/invoice_model.dart';
@@ -15,6 +20,9 @@ import '../models/inventory_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/currency_helper.dart';
+// Mobile-only imports
+import 'package:permission_handler/permission_handler.dart';
+import 'package:gal/gal.dart';
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -30,12 +38,43 @@ class InvoiceDetailScreen extends StatefulWidget {
 
 class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
   bool _deleting = false;
+  bool _converting = false;
   late Invoice _invoice;
 
   @override
   void initState() {
     super.initState();
     _invoice = widget.invoice;
+  }
+
+  // ── تحويل فاتورة العرض إلى بيع ────────────────────────────────────────────
+  Future<void> _convertToSale(BuildContext context) async {
+    setState(() => _converting = true);
+    final error = await DatabaseService.convertQuoteToSale(_invoice);
+    if (!mounted) return;
+    setState(() => _converting = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(error),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
+    } else {
+      setState(() => _invoice = Invoice(
+        id: _invoice.id, invoiceNumber: _invoice.invoiceNumber,
+        customerName: _invoice.customerName, invoiceDate: _invoice.invoiceDate,
+        items: _invoice.items, notes: _invoice.notes,
+        discount: _invoice.discount, totalAmount: _invoice.totalAmount,
+        invoiceType: 'sale',
+      ));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('✅ تم تحويل الفاتورة إلى فاتورة بيع بنجاح'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
+    }
   }
 
   void _printInvoice(BuildContext context) {
@@ -60,205 +99,29 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     });
   }
 
-  // ── Delete Confirmation Dialog ─────────────────────────────────────────────
+  // ── Delete Confirmation — native screen ────────────────────────────────────
   void _confirmDelete(BuildContext context) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogCtx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          // Title
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
+      builder: (_) => _DetailDeleteDialog(
+          invoice: _invoice,
+          onConfirmed: () async {
+            setState(() => _deleting = true);
+            await DatabaseService.deleteInvoice(_invoice.id);
+            DatabaseService.refreshData();
+            if (mounted) {
+              setState(() => _deleting = false);
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم حذف الفاتورة #${_invoice.invoiceNumber} وإعادة المواد للمخزن'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
                 ),
-                child: const Icon(Icons.delete_forever_rounded,
-                    color: Colors.red, size: 24),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'حذف الفاتورة',
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red),
-                ),
-              ),
-            ],
-          ),
-          // Content
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Divider(height: 20),
-                // Warning
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          color: Colors.orange, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'هل أنت متأكد من حذف الفاتورة رقم #${_invoice.invoiceNumber}؟',
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Info rows
-                _DetailInfoRow(
-                  icon: Icons.person_outline_rounded,
-                  label: 'العميل',
-                  value: _invoice.customerName,
-                ),
-                _DetailInfoRow(
-                  icon: Icons.calendar_today_rounded,
-                  label: 'التاريخ',
-                  value: DateFormat('dd/MM/yyyy').format(_invoice.invoiceDate),
-                ),
-                _DetailInfoRow(
-                  icon: Icons.attach_money_rounded,
-                  label: 'الإجمالي',
-                  value: CurrencyHelper.format(_invoice.totalAmount),
-                  valueColor: AppTheme.salesColor,
-                ),
-                const SizedBox(height: 10),
-                // Items to restore
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: const [
-                          Icon(Icons.inventory_2_outlined,
-                              color: AppTheme.primaryBlue, size: 16),
-                          SizedBox(width: 6),
-                          Text(
-                            'المواد التي ستُعاد للمخزن:',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                                color: AppTheme.primaryBlue),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      ..._invoice.items.map((item) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.add_circle_outline_rounded,
-                                    color: Colors.green, size: 14),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(item.itemName,
-                                      style: const TextStyle(fontSize: 13)),
-                                ),
-                                Text(
-                                  '+${item.quantity.toStringAsFixed(item.quantity == item.quantity.roundToDouble() ? 0 : 1)}',
-                                  style: const TextStyle(
-                                      color: Colors.green,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          )),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'لا يمكن التراجع عن هذا الإجراء.',
-                  style: TextStyle(color: AppTheme.textGrey, fontSize: 12),
-                ),
-                const SizedBox(height: 16),
-                // ── Buttons ───────────────────────────────────────────────
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => Navigator.of(dialogCtx).pop(),
-                        icon: const Icon(Icons.close_rounded),
-                        label: const Text('لا، تراجع',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          foregroundColor: AppTheme.textGrey,
-                          side: const BorderSide(color: AppTheme.textGrey),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () async {
-                          Navigator.of(dialogCtx).pop();
-                          setState(() => _deleting = true);
-                          await DatabaseService.deleteInvoice(_invoice.id);
-                          DatabaseService.refreshData();
-                          if (mounted) {
-                            setState(() => _deleting = false);
-                            Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                    '✅ تم حذف الفاتورة #${_invoice.invoiceNumber} وإعادة المواد للمخزن'),
-                                backgroundColor: Colors.green,
-                                duration: const Duration(seconds: 3),
-                              ),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.delete_forever_rounded),
-                        label: const Text('نعم، احذف',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-              ],
-            ),
-          ),
-        ),
+              );
+            }
+          },
       ),
     );
   }
@@ -270,9 +133,40 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
         Scaffold(
           backgroundColor: AppTheme.background,
           appBar: AppBar(
-            backgroundColor: AppTheme.salesColor,
-            title: Text('Invoice #${_invoice.invoiceNumber.toString().padLeft(4, '0')}'),
+            backgroundColor: _invoice.isQuote
+                ? const Color(0xFF7B5EA7)
+                : AppTheme.salesColor,
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Invoice #${_invoice.invoiceNumber.toString().padLeft(4, '0')}'),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _invoice.isQuote ? 'عرض' : 'بيع',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
             actions: [
+              // زر تحويل العرض إلى بيع
+              if (_invoice.isQuote)
+                _converting
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(width: 20, height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
+                    : IconButton(
+                        icon: const Icon(Icons.swap_horiz_rounded),
+                        tooltip: 'تحويل إلى فاتورة بيع',
+                        onPressed: () => _convertToSale(context),
+                      ),
               // Edit button
               IconButton(
                 icon: const Icon(Icons.edit_rounded),
@@ -286,10 +180,10 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                 onPressed: () => _confirmDelete(context),
                 style: IconButton.styleFrom(foregroundColor: Colors.red[100]),
               ),
-              // Print button
+              // Print button — متاح لكلا النوعين (بيع وعرض)
               IconButton(
                 icon: const Icon(Icons.open_in_new_rounded),
-                tooltip: 'Print View (A4)',
+                tooltip: _invoice.isQuote ? 'عرض ومعاينة عرض السعر' : 'Print View (A4)',
                 onPressed: () => _printInvoice(context),
               ),
               const SizedBox(width: 4),
@@ -312,21 +206,24 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
           ),
         ),
         // Loading overlay while deleting
-        if (_deleting)
+        if (_deleting || _converting)
           Container(
             color: Colors.black26,
-            child: const Center(
+            child: Center(
               child: Card(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('جاري حذف الفاتورة\nوإعادة المواد للمخزن...',
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(
+                        _converting
+                            ? 'جاري تحويل الفاتورة إلى بيع\nوخصم المواد من المخزن...'
+                            : 'جاري حذف الفاتورة\nوإعادة المواد للمخزن...',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 14)),
+                          style: const TextStyle(fontSize: 14)),
                     ],
                   ),
                 ),
@@ -350,316 +247,615 @@ class InvoicePrintScreen extends StatefulWidget {
 }
 
 class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
-  String? _logoBase64; // loaded once in initState
+  // ── حالات التصدير على الموبايل ───────────────────────────────────────────
+  _ExportState _exportState = _ExportState.idle;
+  Uint8List?   _generatedBytes;
 
   @override
   void initState() {
     super.initState();
-    _loadLogo();
+    // على الموبايل: نبدأ توليد الصورة تلقائياً بعد أول frame
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _generateA4Image());
+    }
   }
 
-  Future<void> _loadLogo() async {
+  // ── توليد ملف PDF في الخلفية (الموبايل) ─────────────────────────────────
+  Future<void> _generateA4Image() async {
+    if (!mounted) return;
+    setState(() { _exportState = _ExportState.generating; });
     try {
-      final bytes = await rootBundle
-          .load('assets/images/company_logo.png');
-      final b64 = base64Encode(bytes.buffer.asUint8List());
-      if (mounted) setState(() => _logoBase64 = b64);
-    } catch (_) {
-      // logo not available – fallback to emoji handled in HTML
+      final invNum     = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+      final dateStr    = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
+      final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
+
+      // التقاط A4 كاملة بدقة 3× خارج الشاشة
+      final bytes = await _captureFullA4(
+        invNum: invNum, dateStr: dateStr, printedStr: printedStr,
+      );
+      if (mounted) setState(() { _generatedBytes = bytes; _exportState = _ExportState.ready; });
+    } catch (e) {
+      if (kDebugMode) debugPrint('generateA4 error: $e');
+      if (mounted) setState(() { _exportState = _ExportState.error; });
     }
   }
 
-  // ── Build a standalone HTML page for the invoice ─────────────────────────
-  String _buildInvoiceHtml() {
-    final invoice = widget.invoice;
-    final invNum = invoice.invoiceNumber.toString().padLeft(4, '0');
-    final dateStr = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-    final printedStr =
-        DateFormat('MMM dd, yyyy – hh:mm a').format(DateTime.now());
 
-    // Build items rows HTML
-    final itemsHtml = invoice.items.asMap().entries.map((entry) {
-      final i = entry.key;
-      final item = entry.value;
-      final bg = i % 2 == 0 ? '#ffffff' : '#f0f4ff';
-      final qty = item.quantity % 1 == 0
-          ? item.quantity.toInt().toString()
-          : item.quantity.toStringAsFixed(2);
-      return '''
-        <tr style="background:$bg;">
-          <td style="padding:10px 14px;text-align:center;">
-            <span style="display:inline-flex;align-items:center;justify-content:center;
-              width:22px;height:22px;border-radius:50%;background:rgba(37,99,235,0.12);
-              font-size:10px;font-weight:700;color:#1d4ed8;">${item.sequence}</span>
-          </td>
-          <td style="padding:10px 14px;font-size:12px;font-weight:600;color:#000000;">${_esc(item.itemName)}</td>
-          <td style="padding:10px 14px;text-align:center;font-size:12px;color:#333333;">$qty</td>
-          <td style="padding:10px 14px;text-align:right;font-size:11px;color:#444444;">${CurrencyHelper.format(item.unitPrice)}</td>
-          <td style="padding:10px 14px;text-align:right;font-size:12px;font-weight:700;color:#000000;">${CurrencyHelper.format(item.totalPrice)}</td>
-        </tr>''';
-    }).join('\n');
+  // ── خيارات مسارات الحفظ ───────────────────────────────────────────────────
+  /// يجمع المسارات المتاحة على الجهاز ويعرض ديالوج الاختيار
+  Future<void> _saveToGallery() async {
+    if (_generatedBytes == null || !mounted) return;
 
-    // Totals section
-    final subtotal = invoice.subtotal;
-    final hasDiscount = invoice.discount > 0;
-    final discountHtml = hasDiscount ? '''
-        <tr>
-          <td colspan="4" style="padding:6px 14px;text-align:right;font-size:11px;color:#444444;">Subtotal</td>
-          <td style="padding:6px 14px;text-align:right;font-size:11px;color:#000000;">${CurrencyHelper.format(subtotal)}</td>
-        </tr>
-        <tr>
-          <td colspan="4" style="padding:6px 14px;text-align:right;font-size:11px;color:#cc0000;font-weight:600;">Discount</td>
-          <td style="padding:6px 14px;text-align:right;font-size:11px;color:#cc0000;font-weight:700;">- ${CurrencyHelper.format(invoice.discount)}</td>
-        </tr>''' : '';
+    final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+    final fileName = 'Invoice_$invNum.pdf';
 
-    // Notes HTML
-    final notesHtml = invoice.notes.isNotEmpty ? '''
-      <div style="margin:0 40px 20px;padding:14px;background:#fffde7;border:1px solid #ffecb3;border-radius:8px;">
-        <div style="font-size:10px;font-weight:700;color:#795548;letter-spacing:1px;margin-bottom:6px;">NOTES</div>
-        <div style="font-size:12px;color:#000000;line-height:1.5;">${_esc(invoice.notes)}</div>
-      </div>''' : '';
+    // ── جمع المسارات المتاحة ────────────────────────────────────────────────
+    final List<_SaveLocation> locations = [];
 
-    // Logo HTML: use real logo if loaded, otherwise fallback icon
-    final logoHtml = _logoBase64 != null
-        ? '<img src="data:image/png;base64,$_logoBase64" '
-          'style="width:56px;height:56px;object-fit:contain;border-radius:8px;" />'
-        : '<span style="color:white;font-size:28px;">🏢</span>';
+    if (Platform.isAndroid) {
+      // 1) Downloads العام (متاح دائماً على Android)
+      try {
+        final dl = Directory('/storage/emulated/0/Download');
+        if (await dl.exists()) {
+          locations.add(_SaveLocation(
+            label: 'مجلد التنزيلات',
+            sublabel: 'Download/',
+            icon: Icons.download_rounded,
+            color: const Color(0xFF1565C0),
+            path: dl.path,
+          ));
+        }
+      } catch (_) {}
 
-    return '''<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice #$invNum</title>
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #d0d0d0;
-      display: flex;
-      justify-content: center;
-      padding: 24px;
+      // 2) Documents العام
+      try {
+        final dc = Directory('/storage/emulated/0/Documents');
+        if (!await dc.exists()) await dc.create(recursive: true);
+        locations.add(_SaveLocation(
+          label: 'مجلد المستندات',
+          sublabel: 'Documents/',
+          icon: Icons.folder_rounded,
+          color: const Color(0xFF6A1B9A),
+          path: dc.path,
+        ));
+      } catch (_) {}
+
+      // 3) مجلد خاص بالتطبيق داخل Downloads
+      try {
+        final extDirs = await getExternalStorageDirectories(
+            type: StorageDirectory.downloads);
+        if (extDirs != null && extDirs.isNotEmpty) {
+          locations.add(_SaveLocation(
+            label: 'مجلد التطبيق (Downloads)',
+            sublabel: 'Android/data/.../files/downloads/',
+            icon: Icons.inventory_2_rounded,
+            color: const Color(0xFF2E7D32),
+            path: extDirs.first.path,
+          ));
+        }
+      } catch (_) {}
+
+      // 4) مجلد المستندات الداخلي للتطبيق (دائماً متاح)
+      try {
+        final appDocs = await getApplicationDocumentsDirectory();
+        locations.add(_SaveLocation(
+          label: 'مجلد مستندات التطبيق',
+          sublabel: 'Internal storage (private)',
+          icon: Icons.storage_rounded,
+          color: const Color(0xFF795548),
+          path: appDocs.path,
+        ));
+      } catch (_) {}
+    } else {
+      final appDocs = await getApplicationDocumentsDirectory();
+      locations.add(_SaveLocation(
+        label: 'مجلد المستندات',
+        sublabel: appDocs.path,
+        icon: Icons.folder_rounded,
+        color: const Color(0xFF1565C0),
+        path: appDocs.path,
+      ));
     }
-    .page {
-      width: 794px;
-      min-height: 1123px;
-      background: white;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-      display: flex;
-      flex-direction: column;
+
+    if (locations.isEmpty || !mounted) return;
+
+    // ── عرض ديالوج الاختيار ────────────────────────────────────────────────
+    final chosen = await showModalBottomSheet<_SaveLocation>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _SaveLocationSheet(
+        fileName: fileName,
+        locations: locations,
+      ),
+    );
+
+    if (chosen == null || !mounted) return;
+
+    // ── الحفظ الفعلي ───────────────────────────────────────────────────────
+    setState(() => _exportState = _ExportState.saving);
+    try {
+      await _writePdfToPath(_generatedBytes!, chosen.path, fileName);
+      if (mounted) setState(() => _exportState = _ExportState.saved);
+    } catch (e) {
+      if (kDebugMode) debugPrint('savePDF error: $e');
+      if (mounted) {
+        setState(() => _exportState = _ExportState.error);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('❌ فشل الحفظ: $e'), backgroundColor: Colors.red,
+        ));
+      }
     }
-    @media print {
-      body { background: white !important; padding: 0 !important; }
-      .page { box-shadow: none !important; width: 100% !important; }
-      @page { size: A4 portrait; margin: 0; }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-
-    <!-- ── HEADER ── -->
-    <div style="background:linear-gradient(to right,#1e3a5f,#2e7d32);padding:28px 40px;display:flex;align-items:center;">
-      <div style="width:64px;height:64px;background:rgba(255,255,255,0.15);border-radius:12px;
-                  border:1.5px solid rgba(255,255,255,0.3);display:flex;align-items:center;justify-content:center;
-                  flex-shrink:0;overflow:hidden;">
-        $logoHtml
-      </div>
-      <div style="margin-left:16px;flex:1;">
-        <div style="color:white;font-size:22px;font-weight:700;letter-spacing:2px;">VINEX TECHNOLOGY</div>
-
-        <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px;">
-          <div style="display:flex;align-items:center;gap:5px;">
-            <span style="color:rgba(255,255,255,0.6);font-size:10px;">&#128205;</span>
-            <span style="color:rgba(255,255,255,0.85);font-size:10px;letter-spacing:0.3px;">Baghdad, Yarmouk, Al-Fakhri 2 Building</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:5px;">
-            <span style="color:rgba(255,255,255,0.6);font-size:10px;">&#128222;</span>
-            <span style="color:rgba(255,255,255,0.85);font-size:10px;letter-spacing:0.5px;">07803662728</span>
-          </div>
-        </div>
-      </div>
-      <div style="text-align:right;">
-        <div style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);
-                    border-radius:6px;padding:5px 14px;display:inline-block;
-                    color:white;font-weight:700;font-size:12px;letter-spacing:3px;">INVOICE</div>
-        <div style="color:white;font-size:24px;font-weight:700;margin-top:6px;">#$invNum</div>
-      </div>
-    </div>
-
-    <!-- ── BILL TO / INVOICE DETAILS ── -->
-    <div style="display:flex;gap:16px;padding:24px 40px 0;">
-      <div style="flex:1;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-        <div style="background:#2563eb;padding:8px 12px;">
-          <span style="color:white;font-size:10px;font-weight:700;letter-spacing:1.2px;">BILL TO</span>
-        </div>
-        <div style="padding:12px;">
-          <div style="font-size:10px;font-weight:700;color:#444444;margin-bottom:4px;">Customer</div>
-          <div style="font-size:15px;font-weight:700;color:#cc0000;">${_esc(invoice.customerName)}</div>
-        </div>
-      </div>
-      <div style="flex:1;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-        <div style="background:#2e7d32;padding:8px 12px;">
-          <span style="color:white;font-size:10px;font-weight:700;letter-spacing:1.2px;">INVOICE DETAILS</span>
-        </div>
-        <div style="padding:12px;">
-          <table style="width:100%;font-size:11px;border-collapse:collapse;">
-            <tr><td style="color:#444444;font-weight:700;padding-bottom:5px;">Invoice No.</td>
-                <td style="color:#cc0000;font-weight:700;text-align:right;font-size:13px;">#$invNum</td></tr>
-            <tr><td style="color:#444444;font-weight:700;padding-bottom:5px;">Date</td>
-                <td style="color:#cc0000;font-weight:700;text-align:right;">$dateStr</td></tr>
-            <tr><td style="color:#444444;font-weight:700;padding-bottom:5px;">Items</td>
-                <td style="color:#000000;font-weight:700;text-align:right;">${invoice.items.length} item(s)</td></tr>
-            <tr><td style="color:#444444;font-weight:700;">Printed</td>
-                <td style="color:#000000;font-weight:600;text-align:right;font-size:10px;">$printedStr</td></tr>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── ITEMS TABLE ── -->
-    <div style="margin:24px 40px 0;">
-      <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-        <thead>
-          <tr style="background:#2563eb;">
-            <th style="padding:10px 14px;color:white;font-size:10px;font-weight:700;letter-spacing:0.5px;text-align:center;width:40px;">#</th>
-            <th style="padding:10px 14px;color:white;font-size:10px;font-weight:700;letter-spacing:0.5px;text-align:left;">ITEM NAME</th>
-            <th style="padding:10px 14px;color:white;font-size:10px;font-weight:700;letter-spacing:0.5px;text-align:center;width:60px;">QTY</th>
-            <th style="padding:10px 14px;color:white;font-size:10px;font-weight:700;letter-spacing:0.5px;text-align:right;width:110px;">UNIT PRICE</th>
-            <th style="padding:10px 14px;color:white;font-size:10px;font-weight:700;letter-spacing:0.5px;text-align:right;width:110px;">AMOUNT</th>
-          </tr>
-        </thead>
-        <tbody>
-          $itemsHtml
-          <!-- divider before totals -->
-          <tr><td colspan="5" style="border-top:2px solid #e5e7eb;padding:0;"></td></tr>
-          $discountHtml
-          <tr>
-            <td colspan="4">&nbsp;</td>
-            <td style="padding:0;"></td>
-          </tr>
-        </tbody>
-        <tfoot>
-          <tr style="background:linear-gradient(to right,#16a34a,#43a047);">
-            <td colspan="4" style="padding:14px;color:white;font-size:11px;font-weight:700;letter-spacing:0.8px;">TOTAL AMOUNT</td>
-            <td style="padding:14px;color:#ffff00;font-size:18px;font-weight:700;text-align:right;text-shadow:0 1px 3px rgba(0,0,0,0.3);">${CurrencyHelper.format(invoice.totalAmount)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-
-    $notesHtml
-
-    <!-- ── SPACER ── -->
-    <div style="flex:1;"></div>
-
-    <!-- ── FOOTER ── -->
-    <div style="padding:14px 40px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
-      <div style="display:flex;flex-direction:column;gap:3px;">
-        <span style="font-size:10px;color:#94a3b8;font-style:italic;">Thank you for your business!</span>
-        <div style="display:flex;align-items:center;gap:12px;margin-top:2px;">
-          <span style="font-size:9px;color:#94a3b8;">&#128205; Baghdad, Yarmouk, Al-Fakhri 2 Building</span>
-          <span style="font-size:9px;color:#94a3b8;">&#128222; 07803662728</span>
-        </div>
-      </div>
-      <span style="font-size:10px;color:#2563eb;font-weight:700;">VINEX TECHNOLOGY © 2025</span>
-    </div>
-
-  </div>
-</body>
-</html>''';
   }
 
-  /// Escape HTML special characters
-  static String _esc(String s) => s
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;');
+  /// يكتب ملف PDF في المسار المحدد ويعرض رسالة نجاح
+  Future<void> _writePdfToPath(
+      Uint8List bytes, String dirPath, String fileName) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) await dir.create(recursive: true);
 
-  // ── Open HTML preview in new browser tab (unchanged) ────────────────────
-  void _doPrint() {
-    if (!kIsWeb) return;
-    final html = _buildInvoiceHtml();
-    final encoded = Uri.encodeFull(html)
-        .replaceAll("'", "%27")
-        .replaceAll('"', '%22');
-    evalJs("window.__invHtml = '$encoded';");
-    evalJs('''
-      (function(){
-        var decoded = decodeURI(window.__invHtml);
-        var blob = new Blob([decoded], {type: 'text/html'});
-        var url  = URL.createObjectURL(blob);
-        var a    = document.createElement('a');
-        a.href   = url;
-        a.target = '_blank';
-        a.rel    = 'noopener noreferrer';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function(){ URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
-      })();
-    ''');
+    final file = File('$dirPath/$fileName');
+    await file.writeAsBytes(bytes, flush: true);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(
+              '✅ تم حفظ الفاتورة بنجاح\n🖼 $fileName',
+              style: const TextStyle(fontSize: 12),
+            )),
+          ]),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
-  // ── Export Invoice as Image (PNG) ─────────────────────────────────────────
+  // ── Export Image (ويب فقط) ────────────────────────────────────────────────
   final GlobalKey _invoiceKey = GlobalKey();
-  bool _exportingImg = false;
+  bool _exportingWeb = false;
 
-  Future<void> _exportImage() async {
-    if (_exportingImg) return;
-    setState(() => _exportingImg = true);
+  Future<void> _exportImageWeb() async {
+    if (_exportingWeb || !kIsWeb) return;
+    setState(() => _exportingWeb = true);
     try {
-      // Give Flutter one extra frame to finish painting
-      await Future.delayed(const Duration(milliseconds: 120));
-
+      final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+      final fileName = 'Invoice_$invNum';
+      await Future.delayed(const Duration(milliseconds: 200));
       final boundary = _invoiceKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
-      if (boundary == null) {
-        throw Exception('لم يتم العثور على الفاتورة في الشاشة');
-      }
-
-      // Capture widget at 3× resolution → high quality
+      if (boundary == null) throw Exception('لم يتم العثور على الفاتورة');
       final ui.Image uiImage = await boundary.toImage(pixelRatio: 3.0);
-
-      // toByteData with png gives a valid PNG binary directly — no codec needed
-      final ByteData? pngData =
-          await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      final ByteData? pngData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
       if (pngData == null) throw Exception('فشل تحويل الصورة');
-
-      final Uint8List pngBytes = pngData.buffer.asUint8List();
-      final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
-      final fileName = 'Invoice_$invNum.jpg'; // saved as .jpg, content is PNG
-
-      if (kIsWeb) {
-        _downloadImageWeb(pngBytes, fileName);
-      } else {
-        _shareImageMobile(pngBytes, fileName);
-      }
-
+      _downloadImageWeb(pngData.buffer.asUint8List(), '$fileName.jpg');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ تم تصدير الفاتورة كصورة: $fileName'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('تم تحميل الفاتورة: $fileName.jpg'),
+          backgroundColor: Colors.green, duration: const Duration(seconds: 3),
+        ));
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('exportImage error: $e');
+      if (kDebugMode) debugPrint('exportImageWeb error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ فشل تصدير الصورة: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('فشل تصدير الصورة: $e'), backgroundColor: Colors.red,
+        ));
       }
     } finally {
-      if (mounted) setState(() => _exportingImg = false);
+      if (mounted) setState(() => _exportingWeb = false);
     }
   }
 
+  @override
+  Widget build(BuildContext context) {
+    return kIsWeb ? _buildWebView(context) : _buildMobileView(context);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // واجهة الويب — معاينة + تنزيل JPEG
+  // ════════════════════════════════════════════════════════════════
+  Widget _buildWebView(BuildContext context) {
+    final invoice    = widget.invoice;
+    final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
+    final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
+    final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFD0D0D0),
+      appBar: AppBar(
+        backgroundColor: AppTheme.primaryBlueDark,
+        foregroundColor: Colors.white,
+        title: Text(
+          invoice.isQuote
+              ? 'معاينة عرض السعر  #$invNum'
+              : 'معاينة الفاتورة  #$invNum',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(left: 8, right: 10),
+            child: ElevatedButton.icon(
+              onPressed: _exportingWeb ? null : _exportImageWeb,
+              icon: _exportingWeb
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.image_outlined, size: 18),
+              label: Text(_exportingWeb ? 'جاري التنزيل...' : 'Export Image',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: invoice.isQuote
+                    ? const Color(0xFF6A1B9A)
+                    : const Color(0xFFB71C1C),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: Column(children: [
+        Container(
+          width: double.infinity,
+          color: invoice.isQuote
+              ? const Color(0xFF7B5EA7)
+              : AppTheme.primaryBlueDark,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(children: [
+            Icon(
+              invoice.isQuote
+                  ? Icons.request_quote_outlined
+                  : Icons.picture_as_pdf_rounded,
+              color: Colors.white60, size: 15,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              invoice.isQuote
+                  ? 'معاينة عرض السعر — اضغط "Export Image" للتنزيل بصيغة JPEG'
+                  : 'معاينة الفاتورة — اضغط "Export Image" للتنزيل بصيغة JPEG',
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          ]),
+        ),
+        Expanded(child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Center(child: RepaintBoundary(
+            key: _invoiceKey,
+            child: SizedBox(width: _kA4W, child: _A4InvoicePage(
+              invoice: invoice, invNum: invNum,
+              dateStr: dateStr, printedStr: printedStr,
+            )),
+          )),
+        )),
+      ]),
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // واجهة الموبايل — معاينة A4 كاملة مع تدوير وطباعة
+  // ════════════════════════════════════════════════════════════════
+  Widget _buildMobileView(BuildContext context) {
+    final invoice    = widget.invoice;
+    final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
+    final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
+    final printedStr = DateFormat('MMM dd, yyyy - hh:mm a').format(DateTime.now());
+
+    // حساب الـ scale بحيث تملأ صفحة A4 العرض المتاح
+    final screenW = MediaQuery.of(context).size.width;
+    // هامش 12px من كل جانب = 24px إجمالاً
+    const double hPad  = 12.0;
+    final double availW = screenW - hPad * 2;
+    final double scale  = availW / _kA4W;          // نسبة تصغير بحيث العرض يملأ الشاشة
+    final double scaledPageH = _kA4H * scale;       // الارتفاع الفعلي للصفحة المصغرة
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFCFD8DC),
+      appBar: AppBar(
+        backgroundColor: invoice.isQuote
+            ? const Color(0xFF7B5EA7)
+            : AppTheme.primaryBlueDark,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          invoice.isQuote
+              ? 'معاينة عرض السعر  #$invNum'
+              : 'معاينة الفاتورة  #$invNum',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+        ),
+      ),
+      body: Column(
+        children: [
+
+          // ── شريط حالة التوليد ──────────────────────────────────
+          _buildStatusBanner(),
+
+          // ── معاينة A4 مع سكرول عمودي ──────────────────────────
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 16),
+              child: Center(
+                child: Column(
+                  children: [
+                    // ظل خارجي يحاكي ورقة على سطح مكتب
+                    Container(
+                      width: availW,
+                      height: scaledPageH,
+                      decoration: BoxDecoration(
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            blurRadius: 18,
+                            spreadRadius: 2,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      // نُقيّد الـ overflow ونُطبّق الـ scale
+                      child: ClipRect(
+                        child: OverflowBox(
+                          alignment: Alignment.topCenter,
+                          maxWidth:  _kA4W,
+                          maxHeight: _kA4H,
+                          child: Transform.scale(
+                            scale: scale,
+                            alignment: Alignment.topCenter,
+                            child: SizedBox(
+                              width:  _kA4W,
+                              height: _kA4H,
+                              // RepaintBoundary لالتقاط الصورة لاحقاً
+                              child: RepaintBoundary(
+                                key: _mobilePreviewKey,
+                                child: _A4InvoicePage(
+                                  invoice: invoice,
+                                  invNum: invNum,
+                                  dateStr: dateStr,
+                                  printedStr: printedStr,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // تلميح صغير
+                    Text(
+                      'A4  ${_kA4W.toInt()} × ${_kA4H.toInt()} px',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade600,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // ── زر الحفظ / التصدير ─────────────────────────────────
+          SafeArea(
+            top: false,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: invoice.isQuote
+                    ? const Color(0xFF7B5EA7)
+                    : AppTheme.primaryBlueDark,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 8, offset: const Offset(0, -3),
+                  )
+                ],
+              ),
+              child: _buildSaveButton(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // مفتاح للـ RepaintBoundary في المعاينة المصغرة (موبايل)
+  final GlobalKey _mobilePreviewKey = GlobalKey();
+
+  Widget _buildStatusBanner() {
+    switch (_exportState) {
+      case _ExportState.generating:
+        return Container(
+          width: double.infinity,
+          color: const Color(0xFF1565C0),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: const Row(children: [
+            SizedBox(width: 14, height: 14,
+                child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2)),
+            SizedBox(width: 10),
+            Text('جاري تجهيز صورة A4 بدقة عالية…',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
+          ]),
+        );
+      case _ExportState.ready:
+        return Container(
+          width: double.infinity, color: const Color(0xFF2E7D32),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: const Row(children: [
+            Icon(Icons.check_circle_rounded, color: Colors.white70, size: 16),
+            SizedBox(width: 8),
+            Text('صورة A4 جاهزة — اضغط زر الحفظ أدناه',
+                style: TextStyle(color: Colors.white, fontSize: 12)),
+          ]),
+        );
+      case _ExportState.saving:
+        return Container(
+          width: double.infinity, color: const Color(0xFF1565C0),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: const Row(children: [
+            SizedBox(width: 14, height: 14,
+                child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2)),
+            SizedBox(width: 10),
+            Text('جاري حفظ صورة A4 …',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
+          ]),
+        );
+      case _ExportState.saved:
+        return Container(
+          width: double.infinity, color: const Color(0xFF1B5E20),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: const Row(children: [
+            Icon(Icons.image_rounded, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Text('✅ تم حفظ صورة A4 في المستندات',
+                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          ]),
+        );
+      case _ExportState.error:
+        return Container(
+          width: double.infinity, color: const Color(0xFFB71C1C),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: Row(children: [
+            const Icon(Icons.error_outline, color: Colors.white70, size: 16),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              'خطأ في التوليد — اضغط "إعادة المحاولة"',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            )),
+          ]),
+        );
+      case _ExportState.idle:
+        return Container(
+          width: double.infinity, color: AppTheme.primaryBlueDark,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: const Row(children: [
+            Icon(Icons.crop_original_rounded, color: Colors.white60, size: 15),
+            SizedBox(width: 8),
+            Text('جاري تجهيز صورة A4…',
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+          ]),
+        );
+    }
+  }
+
+  Widget _buildSaveButton() {
+    final bool isGenerating = _exportState == _ExportState.generating;
+    final bool isSaving     = _exportState == _ExportState.saving;
+    final bool isSaved      = _exportState == _ExportState.saved;
+    final bool isReady      = _exportState == _ExportState.ready;
+    final bool isError      = _exportState == _ExportState.error;
+    final bool isDisabled   = isGenerating || isSaving || isSaved;
+
+    final Color btnColor = isSaved
+        ? const Color(0xFF1B5E20)
+        : isError ? const Color(0xFFB71C1C) : Colors.green.shade700;
+
+    final Widget btnIcon = (isGenerating || isSaving)
+        ? const SizedBox(width: 22, height: 22,
+            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+        : isSaved
+            ? const Icon(Icons.check_circle_rounded, size: 24)
+            : const Icon(Icons.image_rounded, size: 24);
+
+    final String btnLabel = isGenerating
+        ? 'جاري تجهيز صورة A4…'
+        : isSaving
+            ? 'جاري حفظ الصورة…'
+            : isSaved
+                ? 'تم حفظ الصورة بنجاح ✔'
+                : isError
+                    ? 'إعادة المحاولة'
+                    : 'حفظ الفاتورة كصورة PNG';
+
+    return ElevatedButton.icon(
+      onPressed: isDisabled ? null
+          : isError ? _generateA4Image
+          : isReady  ? _saveToGallery
+          : null,
+      icon: btnIcon,
+      label: Text(btnLabel,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: btnColor,
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: btnColor.withValues(alpha: 0.6),
+        disabledForegroundColor: Colors.white70,
+        minimumSize: const Size.fromHeight(54),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  /// يرسم الفاتورة بحجم A4 الكامل (794px) خارج الشاشة ويلتقطها
+  /// النتيجة: صورة بحجم 2382 × ~3369 px (pixelRatio 3×) — جودة عالية
+  Future<Uint8List> _captureFullA4({
+    required String invNum,
+    required String dateStr,
+    required String printedStr,
+  }) async {
+    // أنشئ RepaintBoundary خارج الشاشة داخل OverlayEntry مؤقت
+    final completer = Completer<Uint8List>();
+    final offKey = GlobalKey();
+
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        // خارج منطقة الرؤية تماماً
+        left: -(_kA4W + 200),
+        top: 0,
+        child: RepaintBoundary(
+          key: offKey,
+          child: SizedBox(
+            width: _kA4W,
+            child: _A4InvoicePage(
+              invoice: widget.invoice,
+              invNum: invNum,
+              dateStr: dateStr,
+              printedStr: printedStr,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // أضف الـ overlay
+    if (!mounted) throw Exception('Widget not mounted');
+    Overlay.of(context).insert(entry);
+
+    // انتظر عدة frames حتى يكتمل الرسم
+    await Future.delayed(const Duration(milliseconds: 400));
+    await WidgetsBinding.instance.endOfFrame;
+
+    try {
+      final boundary =
+          offKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) throw Exception('لم يتم رسم الفاتورة');
+
+      // التقاط بدقة 3× = 2382×~3369 px
+      final img = await boundary.toImage(pixelRatio: 3.0);
+      final byteData =
+          await img.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) throw Exception('فشل تحويل الصورة');
+      completer.complete(byteData.buffer.asUint8List());
+    } catch (e) {
+      completer.completeError(e);
+    } finally {
+      entry.remove();
+    }
+
+    return completer.future;
+  }
+
+  // ── تنزيل الصورة على الويب ────────────────────────────────────────────────
   void _downloadImageWeb(Uint8List bytes, String fileName) {
     final b64 = base64Encode(bytes);
     evalJs("""
@@ -681,120 +877,175 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     """);
   }
 
-  void _shareImageMobile(Uint8List bytes, String fileName) {
-    if (kDebugMode) debugPrint('Share image: $fileName (${bytes.length} bytes)');
-  }
+}
+
+// ── Export State Enum ──────────────────────────────────────────────────────
+enum _ExportState { idle, generating, ready, saving, saved, error }
+
+// ── نموذج بيانات موقع الحفظ ───────────────────────────────────────────────
+class _SaveLocation {
+  final String label;
+  final String sublabel;
+  final IconData icon;
+  final Color color;
+  final String path;
+  const _SaveLocation({
+    required this.label,
+    required this.sublabel,
+    required this.icon,
+    required this.color,
+    required this.path,
+  });
+}
+
+// ── BottomSheet اختيار مكان الحفظ ────────────────────────────────────────
+class _SaveLocationSheet extends StatelessWidget {
+  final String fileName;
+  final List<_SaveLocation> locations;
+  const _SaveLocationSheet({required this.fileName, required this.locations});
 
   @override
   Widget build(BuildContext context) {
-    final invoice = widget.invoice;
-    final invNum = invoice.invoiceNumber.toString().padLeft(4, '0');
-    final dateStr = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-    final printedStr = DateFormat('MMM dd, yyyy – hh:mm a').format(DateTime.now());
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFD0D0D0),
-      appBar: AppBar(
-        backgroundColor: AppTheme.primaryBlueDark,
-        foregroundColor: Colors.white,
-        title: Text('Invoice Preview  #$invNum'),
-        actions: [
-            // ── Export Invoice as Image ────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.only(left: 8, right: 12),
-            child: ElevatedButton(
-              onPressed: _exportingImg ? null : _exportImage,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFB71C1C),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── مقبض السحب ─────────────────────────────────────────────
+            Container(
+              margin: const EdgeInsets.only(top: 10, bottom: 4),
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
               ),
-              child: _exportingImg
-                  ? const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2),
-                        ),
-                        SizedBox(width: 8),
-                        Text('جاري التصدير...',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      ],
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.asset(
-                          'assets/images/company_logo.png',
-                          width: 22,
-                          height: 22,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.image_rounded, size: 18),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Export Image',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      ],
-                    ),
             ),
-          ),
-        ],
-      ),
-      // ── Body: A4 preview + bottom Export button ───────────────────────
-      body: Column(
-        children: [
-          // Top hint bar
-          Container(
-            width: double.infinity,
-            color: AppTheme.primaryBlueDark,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
-              children: [
-                const Icon(Icons.info_outline_rounded, color: Colors.white60, size: 15),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Preview your invoice below. Press "Export Image" to download as JPEG.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
+
+            // ── العنوان ─────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A3A5C).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.save_alt_rounded,
+                      color: Color(0xFF1A3A5C), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('اختر مكان الحفظ',
+                          style: TextStyle(fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1A1A1A))),
+                      Text(fileName,
+                          style: TextStyle(fontSize: 11,
+                              color: Colors.grey.shade600)),
+                    ],
                   ),
                 ),
-              ],
+              ]),
             ),
-          ),
-          // A4 invoice preview
-          Expanded(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-                child: Column(
-                  children: [
-                    RepaintBoundary(
-                      key: _invoiceKey,
-                      child: SizedBox(
-                        width: _kA4W,
-                        child: _A4InvoicePage(
-                          invoice: invoice,
-                          invNum: invNum,
-                          dateStr: dateStr,
-                          printedStr: printedStr,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
+
+            const Divider(height: 20, indent: 20, endIndent: 20),
+
+            // ── قائمة المواقع ───────────────────────────────────────────
+            ...locations.map((loc) => _LocationTile(
+              loc: loc,
+              onTap: () => Navigator.pop(context, loc),
+            )),
+
+            // ── زر الإلغاء ─────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context, null),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('إلغاء'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey.shade700,
+                    side: BorderSide(color: Colors.grey.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+
+            // مسافة أمان للـ notch
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
       ),
     );
   }
 }
+
+// ── عنصر واحد في قائمة المواقع ───────────────────────────────────────────
+class _LocationTile extends StatelessWidget {
+  final _SaveLocation loc;
+  final VoidCallback onTap;
+  const _LocationTile({required this.loc, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: loc.color.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: loc.color.withValues(alpha: 0.2)),
+          ),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: loc.color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(loc.icon, color: loc.color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(loc.label,
+                    style: TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade900)),
+                const SizedBox(height: 2),
+                Text(loc.sublabel,
+                    style: TextStyle(
+                        fontSize: 10, color: Colors.grey.shade500),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ],
+            )),
+            Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: Colors.grey.shade400),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
 
 // ── A4 Invoice Page ──────────────────────────────────────────────────────────
 // A4 dimensions at 96 dpi
@@ -925,12 +1176,14 @@ class _A4InvoicePage extends StatelessWidget {
                         border: Border.all(
                             color: Colors.white.withValues(alpha: 0.4)),
                       ),
-                      child: const Text('INVOICE',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              letterSpacing: 3)),
+                      child: const Text(
+                        'INVOICE',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            letterSpacing: 3),
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text('#$invNum',
@@ -943,6 +1196,27 @@ class _A4InvoicePage extends StatelessWidget {
               ],
             ),
           ),
+
+          // ── QUOTE BANNER (عرض السعر) ───────────────────────────────────
+          if (invoice.isQuote)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              decoration: const BoxDecoration(
+                color: Color(0xFF7B5EA7),
+              ),
+              child: const Center(
+                child: Text(
+                  'عرض سعر — Price Quotation',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
+            ),
 
           // ── INFO ROW (Bill To + Invoice Details) ───────────────────────
           Padding(
@@ -970,7 +1244,6 @@ class _A4InvoicePage extends StatelessWidget {
                       _FieldRow('Invoice No.', '#$invNum'),
                       _FieldRow('Date', dateStr),
                       _FieldRow('Items', '${invoice.items.length} item(s)'),
-                      _FieldRow('Printed', printedStr),
                     ],
                   ),
                 ),
@@ -1010,14 +1283,14 @@ class _A4InvoicePage extends StatelessWidget {
                         children: [
                           const Text('NOTES',
                               style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF795548),
                                   letterSpacing: 1)),
                           const SizedBox(height: 6),
                           Text(invoice.notes,
                               style: const TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 14,
                                   color: AppTheme.textDark,
                                   height: 1.4)),
                         ],
@@ -1051,12 +1324,12 @@ class _A4InvoicePage extends StatelessWidget {
               children: [
                 const Text('Thank you for your business!',
                     style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 12,
                         color: AppTheme.textGrey,
                         fontStyle: FontStyle.italic)),
                 Text('VINEX TECHNOLOGY © 2025',
                     style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 12,
                         color: AppTheme.primaryBlue,
                         fontWeight: FontWeight.bold)),
               ],
@@ -1106,7 +1379,7 @@ class _InfoCard extends StatelessWidget {
             child: Text(title,
                 style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 10,
+                    fontSize: 13,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1.2)),
           ),
@@ -1120,21 +1393,21 @@ class _InfoCard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             SizedBox(
-                              width: 70,
+                              width: 80,
                               child: Text(r.label,
                                   style: const TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.bold,
                                       color: AppTheme.textGrey)),
                             ),
                             const Text(': ',
                                 style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 13,
                                     color: AppTheme.textGrey)),
                             Expanded(
                               child: Text(r.value,
                                   style: TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.bold,
                                       color: (r.label == 'Customer' ||
                                               r.label == 'Invoice No.' ||
@@ -1254,7 +1527,7 @@ class _ItemsTable extends StatelessWidget {
                     child: Text(item.itemName,
                         style: const TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.bold,
                             color: AppTheme.textDark)),
                   ),
                   SizedBox(
@@ -1265,7 +1538,9 @@ class _ItemsTable extends StatelessWidget {
                           : item.quantity.toStringAsFixed(2),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF333333)),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF333333)),
                     ),
                   ),
                   SizedBox(
@@ -1273,7 +1548,9 @@ class _ItemsTable extends StatelessWidget {
                     child: Text(CurrencyHelper.format(item.unitPrice),
                         textAlign: TextAlign.right,
                         style: const TextStyle(
-                            fontSize: 11, color: Color(0xFF555555))),
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF333333))),
                   ),
                   SizedBox(
                     width: 110,
@@ -1328,10 +1605,10 @@ class _TotalsBox extends StatelessWidget {
                 children: [
                   const Text('Subtotal',
                       style: TextStyle(
-                          fontSize: 10, color: AppTheme.textGrey)),
+                          fontSize: 13, color: AppTheme.textGrey)),
                   Text(CurrencyHelper.format(subtotal),
                       style: const TextStyle(
-                          fontSize: 10, color: Colors.black)),
+                          fontSize: 13, color: Colors.black)),
                 ],
               ),
             ),
@@ -1348,14 +1625,14 @@ class _TotalsBox extends StatelessWidget {
                       const SizedBox(width: 4),
                       const Text('Discount',
                           style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 13,
                               color: Color(0xFFE65100),
-                              fontWeight: FontWeight.w600)),
+                              fontWeight: FontWeight.bold)),
                     ],
                   ),
                   Text('- ${CurrencyHelper.format(invoice.discount)}',
                       style: const TextStyle(
-                          fontSize: 10,
+                          fontSize: 13,
                           color: Color(0xFFE65100),
                           fontWeight: FontWeight.bold)),
                 ],
@@ -1372,32 +1649,91 @@ class _TotalsBox extends StatelessWidget {
             width: double.infinity,
             padding:
                 const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
                 colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
                 begin: Alignment.topLeft,
                 end: Alignment.topRight,
               ),
-              borderRadius:
-                  BorderRadius.vertical(bottom: Radius.circular(7)),
+              borderRadius: invoice.hasDownPayment
+                  ? BorderRadius.zero
+                  : const BorderRadius.vertical(bottom: Radius.circular(7)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('TOTAL',
+                const Text('TOTAL AMOUNT',
                     style: TextStyle(
                         color: Colors.white,
-                        fontSize: 11,
+                        fontSize: 13,
                         fontWeight: FontWeight.bold,
-                        letterSpacing: 0.8)),
+                        letterSpacing: 0.5)),
                 Text(CurrencyHelper.format(invoice.totalAmount),
                     style: const TextStyle(
                         color: Color(0xFFFFFF00),
-                        fontSize: 16,
+                        fontSize: 13,
                         fontWeight: FontWeight.bold)),
               ],
             ),
           ),
+          // Down Payment & Remaining Amount
+          if (invoice.hasDownPayment) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.payments_outlined,
+                        size: 13, color: Color(0xFF1565C0)),
+                    const SizedBox(width: 4),
+                    const Text('Down Payment',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF1565C0),
+                            fontWeight: FontWeight.bold)),
+                  ]),
+                  Text(CurrencyHelper.format(invoice.downPayment),
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF1565C0),
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Divider(height: 14, thickness: 0.8),
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.topRight,
+                ),
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(7)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Remaining Amount',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5)),
+                  Text(CurrencyHelper.format(invoice.remainingAmount),
+                      style: const TextStyle(
+                          color: Color(0xFFFFFF00),
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1682,7 +2018,7 @@ class _InvoiceDocument extends StatelessWidget {
                       SizedBox(width: 6),
                       Text('NOTES',
                           style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 13,
                               fontWeight: FontWeight.bold,
                               color: AppTheme.textGrey,
                               letterSpacing: 1)),
@@ -1699,7 +2035,7 @@ class _InvoiceDocument extends StatelessWidget {
                     ),
                     child: Text(invoice.notes,
                         style: const TextStyle(
-                            fontSize: 13, color: Colors.black, height: 1.4)),
+                            fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black, height: 1.4)),
                   ),
                   const SizedBox(height: 12),
                   const Divider(height: 1),
@@ -1786,10 +2122,65 @@ class _InvoiceDocument extends StatelessWidget {
                               style: const TextStyle(
                                   color: Color(0xFFFFFF00),
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 22)),
+                                  fontSize: 13)),
                         ],
                       ),
                     ),
+                    // Down Payment & Remaining Amount
+                    if (invoice.hasDownPayment) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(children: [
+                            const Icon(Icons.payments_outlined,
+                                size: 14, color: Color(0xFF1565C0)),
+                            const SizedBox(width: 4),
+                            const Text('Down Payment',
+                                style: TextStyle(
+                                    color: Color(0xFF1565C0),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                          ]),
+                          Text(CurrencyHelper.format(invoice.downPayment),
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF1565C0),
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Divider(height: 1),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Remaining Amount',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    letterSpacing: 0.5)),
+                            Text(CurrencyHelper.format(invoice.remainingAmount),
+                                style: const TextStyle(
+                                    color: Color(0xFFFFFF00),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1837,6 +2228,7 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
   late TextEditingController _customerCtrl;
   late TextEditingController _notesCtrl;
   late TextEditingController _discountCtrl;
+  late TextEditingController _downPaymentCtrl;
   late DateTime _invoiceDate;
   late List<_EditRowController> _rows;
   List<InventoryItem> _inventoryItems = [];
@@ -1851,6 +2243,11 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
         text: widget.invoice.discount > 0
             ? widget.invoice.discount.toStringAsFixed(
                 widget.invoice.discount % 1 == 0 ? 0 : 2)
+            : '');
+    _downPaymentCtrl = TextEditingController(
+        text: widget.invoice.downPayment > 0
+            ? widget.invoice.downPayment.toStringAsFixed(
+                widget.invoice.downPayment % 1 == 0 ? 0 : 2)
             : '');
     _invoiceDate = widget.invoice.invoiceDate;
     _loadInventoryAndRows();
@@ -1892,6 +2289,7 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
     _customerCtrl.dispose();
     _notesCtrl.dispose();
     _discountCtrl.dispose();
+    _downPaymentCtrl.dispose();
     for (final r in _rows) { r.dispose(); }
     super.dispose();
   }
@@ -1914,6 +2312,8 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
   double get _subtotal => _rows.fold(0.0, (s, r) => s + r.lineTotal);
   double get _discountValue => double.tryParse(_discountCtrl.text) ?? 0;
   double get _grandTotal => (_subtotal - _discountValue).clamp(0, double.infinity);
+  double get _downPaymentValue => double.tryParse(_downPaymentCtrl.text) ?? 0;
+  double get _remainingAmount => (_grandTotal - _downPaymentValue).clamp(0, double.infinity);
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -1972,6 +2372,8 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
       notes: _notesCtrl.text.trim(),
       discount: _discountValue,
       totalAmount: _grandTotal,
+      invoiceType: widget.invoice.invoiceType,
+      downPayment: _downPaymentValue,
     );
 
     final error = await DatabaseService.updateInvoiceWithStockAdjustment(
@@ -2243,6 +2645,56 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 10),
+                  // Down Payment
+                  if (!widget.invoice.isQuote) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.payments_outlined,
+                            size: 18, color: Color(0xFF1565C0)),
+                        const SizedBox(width: 8),
+                        const Text('Down Payment',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1565C0))),
+                        const Spacer(),
+                        SizedBox(
+                          width: 130,
+                          child: TextField(
+                            controller: _downPaymentCtrl,
+                            onChanged: (_) => setState(() {}),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF1565C0),
+                                fontWeight: FontWeight.bold),
+                            decoration: InputDecoration(
+                              hintText: '0',
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: const BorderSide(
+                                      color: Color(0xFF90CAF9))),
+                              focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: const BorderSide(
+                                      color: Color(0xFF1565C0), width: 1.5)),
+                              enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: const BorderSide(
+                                      color: Color(0xFF90CAF9))),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
                   const SizedBox(height: 12),
                   const Divider(height: 1),
                   const SizedBox(height: 12),
@@ -2267,31 +2719,58 @@ class _InvoiceEditScreenState extends State<InvoiceEditScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('GRAND TOTAL',
-                                style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11,
-                                    letterSpacing: 1)),
-                            SizedBox(height: 2),
-                            Text('After discount',
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 10)),
-                          ],
-                        ),
+                        const Text('TOTAL AMOUNT',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                letterSpacing: 0.5)),
                         Text(
                           CurrencyHelper.format(_grandTotal),
                           style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 26,
+                            color: Color(0xFFFFFF00),
+                            fontSize: 13,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ],
                     ),
                   ),
+                  // Remaining Amount
+                  if (!widget.invoice.isQuote && _downPaymentValue > 0) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Remaining Amount',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  letterSpacing: 0.5)),
+                          Text(
+                            CurrencyHelper.format(_remainingAmount),
+                            style: const TextStyle(
+                              color: Color(0xFFFFFF00),
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2672,6 +3151,143 @@ const _editHeaderStyle = TextStyle(
   fontSize: 13,
   color: AppTheme.salesColor,
 );
+
+// ── شاشة تأكيد حذف الفاتورة الأصيلة (invoice detail) ─────────────────────────
+class _DetailDeleteDialog extends StatelessWidget {
+  final dynamic invoice; // Invoice type
+  final Future<void> Function() onConfirmed;
+  const _DetailDeleteDialog({required this.invoice, required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: const BoxDecoration(
+            color: Colors.red,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.delete_forever_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text('حذف الفاتورة', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+            ],
+          ),
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'هل أنت متأكد من حذف الفاتورة رقم #${invoice.invoiceNumber}؟',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _DetailInfoRow(icon: Icons.person_outline_rounded, label: 'العميل', value: invoice.customerName),
+              _DetailInfoRow(icon: Icons.calendar_today_rounded, label: 'التاريخ', value: DateFormat('dd/MM/yyyy').format(invoice.invoiceDate)),
+              _DetailInfoRow(icon: Icons.attach_money_rounded, label: 'الإجمالي', value: CurrencyHelper.format(invoice.totalAmount), valueColor: AppTheme.salesColor),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(children: [
+                      Icon(Icons.inventory_2_outlined, color: AppTheme.primaryBlue, size: 16),
+                      SizedBox(width: 6),
+                      Text('المواد التي ستُعاد للمخزن:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.primaryBlue)),
+                    ]),
+                    const SizedBox(height: 8),
+                    ...invoice.items.map<Widget>((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.add_circle_outline_rounded, color: Colors.green, size: 14),
+                          const SizedBox(width: 6),
+                          Expanded(child: Text(item.itemName, style: const TextStyle(fontSize: 13))),
+                          Text('+${item.quantity.toStringAsFixed(item.quantity == item.quantity.roundToDouble() ? 0 : 1)}',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    )).toList(),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('لا يمكن التراجع عن هذا الإجراء.', style: TextStyle(color: AppTheme.textGrey, fontSize: 12)),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('لا، تراجع', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    foregroundColor: AppTheme.textGrey,
+                    side: const BorderSide(color: AppTheme.textGrey),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await onConfirmed();
+                  },
+                  icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                  label: const Text('نعم، احذف', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _InfoBlock extends StatelessWidget {
   final String title;

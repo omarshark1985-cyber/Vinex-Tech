@@ -504,15 +504,15 @@ class _SalesReportTabState extends State<_SalesReportTab> {
                         Expanded(
                           child: Text(entry.key,
                               style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: r.fs14)),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: r.fs16)),
                         ),
                         Text(
                           CurrencyHelper.format(entry.value),
                           style: TextStyle(
                               color: AppTheme.salesColor,
                               fontWeight: FontWeight.bold,
-                              fontSize: r.fs14),
+                              fontSize: r.fs16),
                         ),
                       ],
                     ),
@@ -632,14 +632,14 @@ class _PurchasesReportTabState extends State<_PurchasesReportTab> {
                         Expanded(
                           child: Text(entry.key,
                               style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: r.fs14)),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: r.fs16)),
                         ),
                         Text(CurrencyHelper.format(entry.value),
                             style: TextStyle(
                                 color: AppTheme.purchasesColor,
                                 fontWeight: FontWeight.bold,
-                                fontSize: r.fs14)),
+                                fontSize: r.fs16)),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -698,12 +698,13 @@ class _PurchasesReportTabState extends State<_PurchasesReportTab> {
                         Expanded(
                           child: Text(entry.key,
                               style: const TextStyle(
-                                  fontWeight: FontWeight.w600)),
+                                  fontWeight: FontWeight.bold, fontSize: 15)),
                         ),
                         Text(CurrencyHelper.format(entry.value),
                             style: const TextStyle(
                                 color: AppTheme.purchasesColor,
-                                fontWeight: FontWeight.bold)),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
                       ],
                     ),
                   ),
@@ -941,19 +942,19 @@ class _InvoiceReportRow extends StatelessWidget {
                 Text(
                   'Invoice #${invoice.invoiceNumber.toString().padLeft(4, '0')}',
                   style: TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: r.fs14),
+                      fontWeight: FontWeight.bold, fontSize: r.fs16),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   'Customer: ${invoice.customerName}  •  ${invoice.items.length} items',
                   style: TextStyle(
-                      color: AppTheme.textGrey, fontSize: r.fs12),
+                      color: AppTheme.textGrey, fontSize: r.fs14),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   DateFormat('MMM dd, yyyy').format(invoice.invoiceDate),
                   style: TextStyle(
-                      color: AppTheme.textGrey, fontSize: r.fs11),
+                      color: AppTheme.textGrey, fontSize: r.fs13),
                 ),
                 // ── صف الخصم (يظهر فقط عند وجود خصم) ────────────────
                 if (hasDiscount) ...[
@@ -1006,12 +1007,12 @@ class _InvoiceReportRow extends StatelessWidget {
                 style: TextStyle(
                     color: AppTheme.salesColor,
                     fontWeight: FontWeight.bold,
-                    fontSize: r.fs14),
+                    fontSize: r.fs16),
               ),
               if (hasDiscount)
                 Text('after discount',
                     style: TextStyle(
-                        fontSize: r.fs11, color: AppTheme.textGrey)),
+                        fontSize: r.fs13, color: AppTheme.textGrey)),
             ],
           ),
         ],
@@ -1110,13 +1111,13 @@ class _TransactionRow extends StatelessWidget {
               children: [
                 Text(title,
                     style: TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: r.fs14)),
+                        fontWeight: FontWeight.bold, fontSize: r.fs16)),
                 Text(subtitle,
                     style: TextStyle(
-                        color: AppTheme.textGrey, fontSize: r.fs12)),
+                        color: AppTheme.textGrey, fontSize: r.fs14)),
                 Text(date,
                     style: TextStyle(
-                        color: AppTheme.textGrey, fontSize: r.fs11)),
+                        color: AppTheme.textGrey, fontSize: r.fs13)),
               ],
             ),
           ),
@@ -1124,7 +1125,7 @@ class _TransactionRow extends StatelessWidget {
               style: TextStyle(
                   color: color,
                   fontWeight: FontWeight.bold,
-                  fontSize: r.fs14)),
+                  fontSize: r.fs16)),
         ],
       ),
     );

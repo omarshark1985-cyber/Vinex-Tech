@@ -200,13 +200,13 @@ class InvoicePdfGenerator {
               children: [
                 pw.Text('Customer',
                     style: pw.TextStyle(
-                        fontSize: 9,
+                        fontSize: 11,
                         fontWeight: pw.FontWeight.bold,
                         color: _mid)),
                 pw.SizedBox(height: 4),
                 pw.Text(invoice.customerName,
                     style: pw.TextStyle(
-                        fontSize: 15,
+                        fontSize: 17,
                         fontWeight: pw.FontWeight.bold,
                         color: const PdfColor.fromInt(0xFFCC0000))),
               ],
@@ -228,7 +228,6 @@ class InvoicePdfGenerator {
                 _detailRow('Invoice No.', '#$invNum'),
                 _detailRow('Date', dateStr),
                 _detailRow('Items', '${invoice.items.length} item(s)'),
-                _detailRow('Printed', printedStr, small: true),
               ],
             ),
           ),
@@ -265,7 +264,7 @@ class InvoicePdfGenerator {
             child: pw.Text(title,
                 style: pw.TextStyle(
                     color: _white,
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: pw.FontWeight.bold,
                     letterSpacing: 1.2)),
           ),
@@ -286,7 +285,7 @@ class InvoicePdfGenerator {
         child: pw.Text(label,
             style: pw.TextStyle(
                 color: _mid,
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: pw.FontWeight.bold)),
       ),
       pw.Padding(
@@ -295,7 +294,7 @@ class InvoicePdfGenerator {
             textAlign: pw.TextAlign.right,
             style: pw.TextStyle(
                 color: _red,
-                fontSize: small ? 9 : 11,
+                fontSize: small ? 11 : 13,
                 fontWeight: pw.FontWeight.bold)),
       ),
     ]);
@@ -365,7 +364,7 @@ class InvoicePdfGenerator {
                         child: pw.Center(
                           child: pw.Text('${item.sequence}',
                               style: pw.TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 12,
                                   fontWeight: pw.FontWeight.bold,
                                   color: _blue)),
                         ),
@@ -378,14 +377,14 @@ class InvoicePdfGenerator {
                         style: pw.TextStyle(
                             fontSize: 12,
                             fontWeight: pw.FontWeight.bold,
-                            color: _black)),
+                            color: _dark)),
                   ),
                   pw.SizedBox(
                     width: 60,
                     child: pw.Text(qty,
                         textAlign: pw.TextAlign.center,
                         style: pw.TextStyle(
-                            fontSize: 12, color: _dark)),
+                            fontSize: 12, fontWeight: pw.FontWeight.bold, color: _dark)),
                   ),
                   pw.SizedBox(
                     width: 110,
@@ -393,7 +392,7 @@ class InvoicePdfGenerator {
                         CurrencyHelper.format(item.unitPrice),
                         textAlign: pw.TextAlign.right,
                         style: pw.TextStyle(
-                            fontSize: 11, color: _mid)),
+                            fontSize: 12, fontWeight: pw.FontWeight.bold, color: _dark)),
                   ),
                   pw.SizedBox(
                     width: 110,
@@ -428,7 +427,7 @@ class InvoicePdfGenerator {
                     child: pw.Text('Subtotal',
                         textAlign: pw.TextAlign.right,
                         style: pw.TextStyle(
-                            fontSize: 11, color: _mid)),
+                            fontSize: 13, fontWeight: pw.FontWeight.bold, color: _mid)),
                   ),
                   pw.SizedBox(
                     width: 110,
@@ -436,7 +435,7 @@ class InvoicePdfGenerator {
                         CurrencyHelper.format(subtotal),
                         textAlign: pw.TextAlign.right,
                         style: pw.TextStyle(
-                            fontSize: 11, color: _black)),
+                            fontSize: 13, fontWeight: pw.FontWeight.bold, color: _black)),
                   ),
                 ],
               ),
@@ -451,7 +450,7 @@ class InvoicePdfGenerator {
                     child: pw.Text('Discount',
                         textAlign: pw.TextAlign.right,
                         style: pw.TextStyle(
-                            fontSize: 11,
+                            fontSize: 13,
                             color: _red,
                             fontWeight: pw.FontWeight.bold)),
                   ),
@@ -461,7 +460,7 @@ class InvoicePdfGenerator {
                         '- ${CurrencyHelper.format(invoice.discount)}',
                         textAlign: pw.TextAlign.right,
                         style: pw.TextStyle(
-                            fontSize: 11,
+                            fontSize: 13,
                             color: _red,
                             fontWeight: pw.FontWeight.bold)),
                   ),
@@ -472,16 +471,18 @@ class InvoicePdfGenerator {
 
           // ── TOTAL AMOUNT bar ──────────────────────────────────────────
           pw.Container(
-            decoration: const pw.BoxDecoration(
-              gradient: pw.LinearGradient(
+            decoration: pw.BoxDecoration(
+              gradient: const pw.LinearGradient(
                 colors: [_green, _greenLight],
                 begin: pw.Alignment.centerLeft,
                 end: pw.Alignment.centerRight,
               ),
-              borderRadius: pw.BorderRadius.only(
-                bottomLeft: pw.Radius.circular(7),
-                bottomRight: pw.Radius.circular(7),
-              ),
+              borderRadius: invoice.hasDownPayment
+                  ? pw.BorderRadius.zero
+                  : const pw.BorderRadius.only(
+                      bottomLeft: pw.Radius.circular(7),
+                      bottomRight: pw.Radius.circular(7),
+                    ),
             ),
             padding: const pw.EdgeInsets.symmetric(
                 horizontal: 14, vertical: 14),
@@ -491,7 +492,7 @@ class InvoicePdfGenerator {
                   child: pw.Text('TOTAL AMOUNT',
                       style: pw.TextStyle(
                           color: _white,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: pw.FontWeight.bold,
                           letterSpacing: 0.8)),
                 ),
@@ -499,11 +500,74 @@ class InvoicePdfGenerator {
                     CurrencyHelper.format(invoice.totalAmount),
                     style: pw.TextStyle(
                         color: const PdfColor.fromInt(0xFF000000),
-                        fontSize: 18,
+                        fontSize: 12,
                         fontWeight: pw.FontWeight.bold)),
               ],
             ),
           ),
+
+          // ── DOWN PAYMENT & REMAINING ──────────────────────────────────
+          if (invoice.hasDownPayment) ...[
+            pw.Padding(
+              padding: const pw.EdgeInsets.fromLTRB(14, 8, 14, 0),
+              child: pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: pw.Text('Down Payment',
+                        style: pw.TextStyle(
+                            fontSize: 12,
+                            color: const PdfColor(0.08, 0.40, 0.75),
+                            fontWeight: pw.FontWeight.bold)),
+                  ),
+                  pw.Text(
+                    CurrencyHelper.format(invoice.downPayment),
+                    style: pw.TextStyle(
+                        fontSize: 12,
+                        color: const PdfColor(0.08, 0.40, 0.75),
+                        fontWeight: pw.FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            pw.Container(
+              margin: const pw.EdgeInsets.only(top: 4),
+              decoration: const pw.BoxDecoration(
+                gradient: pw.LinearGradient(
+                  colors: [
+                    PdfColor(0.08, 0.40, 0.75),
+                    PdfColor(0.10, 0.47, 0.85),
+                  ],
+                  begin: pw.Alignment.centerLeft,
+                  end: pw.Alignment.centerRight,
+                ),
+                borderRadius: pw.BorderRadius.only(
+                  bottomLeft: pw.Radius.circular(7),
+                  bottomRight: pw.Radius.circular(7),
+                ),
+              ),
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
+              child: pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: pw.Text('Remaining Amount',
+                        style: pw.TextStyle(
+                            color: _white,
+                            fontSize: 12,
+                            fontWeight: pw.FontWeight.bold,
+                            letterSpacing: 0.5)),
+                  ),
+                  pw.Text(
+                    CurrencyHelper.format(invoice.remainingAmount),
+                    style: pw.TextStyle(
+                        color: const PdfColor(1, 1, 0),
+                        fontSize: 12,
+                        fontWeight: pw.FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -513,7 +577,7 @@ class InvoicePdfGenerator {
       {int flex = 0, pw.TextAlign align = pw.TextAlign.left}) {
     final style = pw.TextStyle(
         color: _white,
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: pw.FontWeight.bold,
         letterSpacing: 0.5);
     if (flex > 0) {
@@ -540,14 +604,15 @@ class InvoicePdfGenerator {
         children: [
           pw.Text('NOTES',
               style: pw.TextStyle(
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: pw.FontWeight.bold,
                   color: const PdfColor.fromInt(0xFF795548),
                   letterSpacing: 1)),
           pw.SizedBox(height: 6),
           pw.Text(notes,
               style: pw.TextStyle(
-                  fontSize: 12,
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
                   color: _black,
                   lineSpacing: 2)),
         ],
@@ -574,7 +639,7 @@ class InvoicePdfGenerator {
             children: [
               pw.Text('Thank you for your business!',
                   style: pw.TextStyle(
-                      fontSize: 10,
+                      fontSize: 12,
                       color: _footerText,
                       fontStyle: pw.FontStyle.italic)),
               pw.SizedBox(height: 3),
@@ -582,18 +647,18 @@ class InvoicePdfGenerator {
                 children: [
                   pw.Text('📍 Baghdad, Yarmouk, Al-Fakhri 2 Building',
                       style: pw.TextStyle(
-                          fontSize: 9, color: _footerText)),
+                          fontSize: 11, color: _footerText)),
                   pw.SizedBox(width: 12),
                   pw.Text('📞 07803662728',
                       style: pw.TextStyle(
-                          fontSize: 9, color: _footerText)),
+                          fontSize: 11, color: _footerText)),
                 ],
               ),
             ],
           ),
           pw.Text('VINEX TECHNOLOGY © 2025',
               style: pw.TextStyle(
-                  fontSize: 10,
+                  fontSize: 12,
                   color: _footerBlue,
                   fontWeight: pw.FontWeight.bold)),
         ],

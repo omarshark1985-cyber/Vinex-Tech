@@ -5,6 +5,8 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   cloud_firestore
   firebase_core
+  gal
+  permission_handler_windows
   printing
 )
 

@@ -154,226 +154,37 @@ class _SalesScreenState extends State<SalesScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogCtx) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            // ── Title ──────────────────────────────────────────────────────
-            title: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppTheme.errorColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.delete_forever_rounded,
-                      color: AppTheme.errorColor, size: 24),
+      builder: (_) => _DeleteInvoiceDialog(
+          invoice: invoice,
+          onConfirmed: () async {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Row(children: [
+                    SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                    SizedBox(width: 12),
+                    Text('جاري حذف الفاتورة وإعادة المواد للمخزن...'),
+                  ]),
+                  duration: Duration(seconds: 4),
+                  backgroundColor: AppTheme.errorColor,
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'حذف الفاتورة',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.errorColor),
-                  ),
+              );
+            }
+            await DatabaseService.deleteInvoice(invoice.id);
+            await DatabaseService.refreshData();
+            if (mounted) {
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم حذف الفاتورة #${invoice.invoiceNumber} وإعادة المواد للمخزن'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
                 ),
-              ],
-            ),
-            // ── Content ────────────────────────────────────────────────────
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Divider(height: 20),
-                  // Warning message
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: Colors.orange.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.warning_amber_rounded,
-                            color: Colors.orange, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'هل أنت متأكد من حذف الفاتورة رقم #${invoice.invoiceNumber}؟',
-                            style: const TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Invoice info
-                  _DialogInfoRow(
-                    icon: Icons.person_outline_rounded,
-                    label: 'العميل',
-                    value: invoice.customerName,
-                  ),
-                  _DialogInfoRow(
-                    icon: Icons.calendar_today_rounded,
-                    label: 'التاريخ',
-                    value: DateFormat('dd/MM/yyyy').format(invoice.invoiceDate),
-                  ),
-                  _DialogInfoRow(
-                    icon: Icons.attach_money_rounded,
-                    label: 'الإجمالي',
-                    value: CurrencyHelper.format(invoice.totalAmount),
-                    valueColor: AppTheme.salesColor,
-                  ),
-                  const SizedBox(height: 10),
-                  // Items to restore
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: Colors.blue.withValues(alpha: 0.2)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.inventory_2_outlined,
-                                color: AppTheme.primaryBlue, size: 16),
-                            SizedBox(width: 6),
-                            Text(
-                              'المواد التي ستُعاد للمخزن:',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  color: AppTheme.primaryBlue),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ...invoice.items.map((item) => Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                      Icons.add_circle_outline_rounded,
-                                      color: Colors.green,
-                                      size: 14),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      item.itemName,
-                                      style:
-                                          const TextStyle(fontSize: 13),
-                                    ),
-                                  ),
-                                  Text(
-                                    '+${item.quantity.toStringAsFixed(item.quantity == item.quantity.roundToDouble() ? 0 : 1)}',
-                                    style: const TextStyle(
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13),
-                                  ),
-                                ],
-                              ),
-                            )),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'لا يمكن التراجع عن هذا الإجراء.',
-                    style: TextStyle(color: AppTheme.textGrey, fontSize: 12),
-                  ),
-                  const SizedBox(height: 16),
-                  // ── Buttons inside content (avoids Expanded-in-actions crash) ──
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => Navigator.of(dialogCtx).pop(),
-                          icon: const Icon(Icons.close_rounded, size: 18),
-                          label: const Text('لا، تراجع',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            foregroundColor: AppTheme.textGrey,
-                            side: const BorderSide(color: AppTheme.textGrey),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            Navigator.of(dialogCtx).pop();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Row(children: [
-                                    SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white)),
-                                    SizedBox(width: 12),
-                                    Text('جاري حذف الفاتورة وإعادة المواد للمخزن...'),
-                                  ]),
-                                  duration: Duration(seconds: 4),
-                                  backgroundColor: AppTheme.errorColor,
-                                ),
-                              );
-                            }
-                            await DatabaseService.deleteInvoice(invoice.id);
-                            await DatabaseService.refreshData();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      '✅ تم حذف الفاتورة #${invoice.invoiceNumber} وإعادة المواد للمخزن'),
-                                  backgroundColor: Colors.green,
-                                  duration: const Duration(seconds: 3),
-                                ),
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.delete_forever_rounded, size: 18),
-                          label: const Text('نعم، احذف',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            backgroundColor: AppTheme.errorColor,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
+              );
+            }
+          },
+        ),
     );
   }
 
@@ -620,21 +431,30 @@ class _InvoiceCard extends StatelessWidget {
                 width: r.isMobile ? 52 : 60,
                 height: r.isMobile ? 52 : 60,
                 decoration: BoxDecoration(
-                  color: AppTheme.salesColor.withValues(alpha: 0.1),
+                  color: inv.isQuote
+                      ? const Color(0xFF7B5EA7).withValues(alpha: 0.1)
+                      : AppTheme.salesColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.receipt_rounded,
-                          color: AppTheme.salesColor,
-                          size: r.isMobile ? 18 : 20),
+                      Icon(
+                        inv.isQuote
+                            ? Icons.description_outlined
+                            : Icons.receipt_rounded,
+                        color: inv.isQuote
+                            ? const Color(0xFF7B5EA7)
+                            : AppTheme.salesColor,
+                        size: r.isMobile ? 18 : 20),
                       const SizedBox(height: 2),
                       Text(
                         '#${inv.invoiceNumber.toString().padLeft(4, '0')}',
                         style: TextStyle(
-                          color: AppTheme.salesColor,
+                          color: inv.isQuote
+                              ? const Color(0xFF7B5EA7)
+                              : AppTheme.salesColor,
                           fontWeight: FontWeight.bold,
                           fontSize: r.fs11,
                           letterSpacing: 0.3,
@@ -651,17 +471,43 @@ class _InvoiceCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      inv.customerName.isNotEmpty
-                          ? inv.customerName
-                          : 'زبون غير محدد',
-                      style: TextStyle(
-                        color: AppTheme.textDark,
-                        fontWeight: FontWeight.bold,
-                        fontSize: r.fs15,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            inv.customerName.isNotEmpty
+                                ? inv.customerName
+                                : 'زبون غير محدد',
+                            style: TextStyle(
+                              color: AppTheme.textDark,
+                              fontWeight: FontWeight.bold,
+                              fontSize: r.fs15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        // شارة نوع الفاتورة
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: inv.isQuote
+                                ? const Color(0xFF7B5EA7).withValues(alpha: 0.12)
+                                : AppTheme.salesColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            inv.isQuote ? 'عرض' : 'بيع',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: inv.isQuote
+                                  ? const Color(0xFF7B5EA7)
+                                  : AppTheme.salesColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -1065,28 +911,150 @@ class _DialogInfoRow extends StatelessWidget {
   }
 }
 
-// ── دالة عرض قائمة الفاتورة المنبثقة ────────────────────────────────────────
-Future<void> showInvoiceFormSheet(BuildContext context, {Invoice? editInvoice}) async {
-  await showDialog(
-    context: context,
-    barrierColor: Colors.black54,
-    builder: (ctx) {
-      final mq = MediaQuery.of(ctx);
-      final w  = mq.size.width  * 0.96;
-      final h  = mq.size.height * 0.94;
-      return Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.zero,
-        child: SizedBox(
-          width:  w,
-          height: h,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: _InvoiceFormSheet(editInvoice: editInvoice),
+// ── شاشة تأكيد حذف الفاتورة الأصيلة ─────────────────────────────────────────
+class _DeleteInvoiceDialog extends StatelessWidget {
+  final Invoice invoice;
+  final Future<void> Function() onConfirmed;
+  const _DeleteInvoiceDialog({required this.invoice, required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: const BoxDecoration(
+            color: AppTheme.errorColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.delete_forever_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text('حذف الفاتورة', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+            ],
           ),
         ),
-      );
-    },
+        contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'هل أنت متأكد من حذف الفاتورة رقم #${invoice.invoiceNumber}؟',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              _DialogInfoRow(icon: Icons.person_outline_rounded, label: 'العميل', value: invoice.customerName),
+              _DialogInfoRow(icon: Icons.calendar_today_rounded, label: 'التاريخ', value: DateFormat('dd/MM/yyyy').format(invoice.invoiceDate)),
+              _DialogInfoRow(icon: Icons.attach_money_rounded, label: 'الإجمالي', value: CurrencyHelper.format(invoice.totalAmount), valueColor: AppTheme.salesColor),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(children: [
+                      Icon(Icons.inventory_2_outlined, color: AppTheme.primaryBlue, size: 16),
+                      SizedBox(width: 6),
+                      Text('المواد التي ستُعاد للمخزن:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.primaryBlue)),
+                    ]),
+                    const SizedBox(height: 8),
+                    ...invoice.items.map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.add_circle_outline_rounded, color: Colors.green, size: 14),
+                          const SizedBox(width: 6),
+                          Expanded(child: Text(item.itemName, style: const TextStyle(fontSize: 13))),
+                          Text('+${item.quantity.toStringAsFixed(item.quantity == item.quantity.roundToDouble() ? 0 : 1)}',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('لا يمكن التراجع عن هذا الإجراء.', style: TextStyle(color: AppTheme.textGrey, fontSize: 12)),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('لا، تراجع', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    foregroundColor: AppTheme.textGrey,
+                    side: const BorderSide(color: AppTheme.textGrey),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await onConfirmed();
+                  },
+                  icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                  label: const Text('نعم، احذف', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: AppTheme.errorColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── دالة عرض شاشة الفاتورة الأصيلة ────────────────────────────────────────
+Future<void> showInvoiceFormSheet(BuildContext context, {Invoice? editInvoice}) async {
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => _InvoiceFormSheet(editInvoice: editInvoice),
+      fullscreenDialog: true,
+    ),
   );
 }
 
@@ -1114,7 +1082,12 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
   final _customerCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   final _discountCtrl = TextEditingController();
+  final _downPaymentCtrl = TextEditingController();
   DateTime _invoiceDate = DateTime.now();
+
+  // نوع الفاتورة: بيع أو عرض
+  String _invoiceType = 'sale';
+  bool get _isQuote => _invoiceType == 'quote';
 
   // Inventory items list (sorted alphabetically)
   List<InventoryItem> _inventoryItems = [];
@@ -1139,7 +1112,10 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
     _notesCtrl.text = inv.notes;
     _discountCtrl.text =
         inv.discount > 0 ? inv.discount.toStringAsFixed(0) : '';
+    _downPaymentCtrl.text =
+        inv.downPayment > 0 ? inv.downPayment.toStringAsFixed(0) : '';
     _invoiceDate = inv.invoiceDate;
+    _invoiceType = inv.invoiceType;
 
     // إنشاء صفوف المواد من عناصر الفاتورة
     _rows.clear();
@@ -1192,6 +1168,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
     _customerCtrl.dispose();
     _notesCtrl.dispose();
     _discountCtrl.dispose();
+    _downPaymentCtrl.dispose();
     for (final r in _rows) {
       r.dispose();
     }
@@ -1219,6 +1196,8 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
   double get _subtotal => _rows.fold(0.0, (sum, r) => sum + r.lineTotal);
   double get _discountValue => double.tryParse(_discountCtrl.text) ?? 0;
   double get _grandTotal => (_subtotal - _discountValue).clamp(0, double.infinity);
+  double get _downPaymentValue => double.tryParse(_downPaymentCtrl.text) ?? 0;
+  double get _remainingAmount => (_grandTotal - _downPaymentValue).clamp(0, double.infinity);
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -1255,13 +1234,15 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
         _showError('السطر ${i + 1}: يجب أن يكون السعر أكبر من 0');
         return;
       }
-      // التحقق من المخزون المتاح (فقط عند الإضافة، أو عند زيادة الكمية)
-      final isEdit = widget.editInvoice != null;
-      if (!isEdit && r.quantity > r.selectedItem!.quantity) {
-        _showError(
-            'السطر ${i + 1}: الكمية المتاحة لـ "${r.selectedItem!.itemName}" غير كافية.\n'
-            'المتاح: ${r.selectedItem!.quantity.toStringAsFixed(0)} ${r.selectedItem!.unit}');
-        return;
+      // التحقق من المخزون المتاح فقط لفواتير البيع
+      if (!_isQuote) {
+        final isEdit = widget.editInvoice != null;
+        if (!isEdit && r.quantity > r.selectedItem!.quantity) {
+          _showError(
+              'السطر ${i + 1}: الكمية المتاحة لـ "${r.selectedItem!.itemName}" غير كافية.\n'
+              'المتاح: ${r.selectedItem!.quantity.toStringAsFixed(0)} ${r.selectedItem!.unit}');
+          return;
+        }
       }
     }
 
@@ -1290,6 +1271,8 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
       notes: _notesCtrl.text.trim(),
       discount: _discountValue,
       totalAmount: _grandTotal,
+      invoiceType: _invoiceType,
+      downPayment: _isQuote ? 0 : _downPaymentValue,
     );
 
     String? error;
@@ -1334,79 +1317,129 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFFF5F7FA),
-        ),
-        child: Column(
-          children: [
-            // ── مقبض السحب ──────────────────────────────────────────────
-            Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 4),
-              width: 44,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-
-            // ── رأس الشيت ────────────────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 10, 12, 14),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF5F7FA),
-              ),
-              child: Row(
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F7FA),
+        appBar: AppBar(
+          backgroundColor: AppTheme.salesColor,
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.receipt_long_rounded, size: 20),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(9),
-                    decoration: BoxDecoration(
-                      color: AppTheme.salesColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.receipt_long_rounded,
-                        color: AppTheme.salesColor, size: 22),
+                  Text(
+                    widget.editInvoice != null ? 'تعديل الفاتورة' : 'فاتورة جديدة',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.editInvoice != null
-                            ? 'تعديل الفاتورة'
-                            : 'فاتورة جديدة',
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textDark)),
-                      Text(
-                        widget.editInvoice != null
-                            ? 'رقم الفاتورة: #${widget.editInvoice!.invoiceNumber.toString().padLeft(4, '0')}'
-                            : 'رقم الفاتورة: #${DatabaseService.nextInvoiceNumber.toString().padLeft(4, '0')}',
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textGrey),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  // زر إغلاق
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.close_rounded,
-                          size: 20, color: AppTheme.textGrey),
-                    ),
+                  Text(
+                    widget.editInvoice != null
+                        ? 'رقم الفاتورة: #${widget.editInvoice!.invoiceNumber.toString().padLeft(4, '0')}'
+                        : 'رقم الفاتورة: #${DatabaseService.nextInvoiceNumber.toString().padLeft(4, '0')}',
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
                   ),
                 ],
               ),
+            ],
+          ),
+          actions: [
+            if (widget.editInvoice != null)
+              IconButton(
+                icon: const Icon(Icons.print_rounded),
+                tooltip: 'معاينة وطباعة الفاتورة',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => InvoicePrintScreen(invoice: widget.editInvoice!),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        body: Column(
+          children: [
+
+            // ── تبديل نوع الفاتورة: بيع / عرض ──────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F6FA),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFDDE1E7)),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _invoiceType = 'sale'),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(vertical: 9),
+                          decoration: BoxDecoration(
+                            color: !_isQuote ? AppTheme.salesColor : Colors.transparent,
+                            borderRadius: BorderRadius.circular(9),
+                            boxShadow: !_isQuote ? [
+                              BoxShadow(color: AppTheme.salesColor.withValues(alpha: 0.3),
+                                  blurRadius: 6, offset: const Offset(0, 2))
+                            ] : [],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.receipt_long_rounded,
+                                  size: 16,
+                                  color: !_isQuote ? Colors.white : AppTheme.textGrey),
+                              const SizedBox(width: 6),
+                              Text('فاتورة بيع',
+                                  style: TextStyle(
+                                      fontSize: 13, fontWeight: FontWeight.bold,
+                                      color: !_isQuote ? Colors.white : AppTheme.textGrey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _invoiceType = 'quote'),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(vertical: 9),
+                          decoration: BoxDecoration(
+                            color: _isQuote ? const Color(0xFF7B5EA7) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(9),
+                            boxShadow: _isQuote ? [
+                              BoxShadow(color: const Color(0xFF7B5EA7).withValues(alpha: 0.3),
+                                  blurRadius: 6, offset: const Offset(0, 2))
+                            ] : [],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.description_outlined,
+                                  size: 16,
+                                  color: _isQuote ? Colors.white : AppTheme.textGrey),
+                              const SizedBox(width: 6),
+                              Text('فاتورة عرض',
+                                  style: TextStyle(
+                                      fontSize: 13, fontWeight: FontWeight.bold,
+                                      color: _isQuote ? Colors.white : AppTheme.textGrey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const Divider(height: 1, color: Color(0xFFE8EAF0)),
 
             // ── المحتوى القابل للتمرير ───────────────────────────────────
             Expanded(
@@ -1484,7 +1517,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                 'لا توجد مواد في المخزن. أضف مواد عبر المشتريات أولاً.',
                                 style: TextStyle(
                                     color: Colors.orange.shade800,
-                                    fontSize: 12, fontWeight: FontWeight.bold),
+                                    fontSize: 14, fontWeight: FontWeight.bold),
                               ),
                             ),
                           ],
@@ -1498,7 +1531,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                       trailing: Text(
                         '${_rows.length} ${_rows.length == 1 ? 'مادة' : 'مواد'}',
                         style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textGrey),
+                            fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textGrey),
                       ),
                       child: Column(
                         children: [
@@ -1518,7 +1551,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                   child: Text('#',
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           color: AppTheme.salesColor)),
                                 ),
                                 Expanded(
@@ -1526,7 +1559,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                   child: Text('المادة (من المخزن)',
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           color: AppTheme.salesColor)),
                                 ),
                                 Expanded(
@@ -1535,7 +1568,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           color: AppTheme.salesColor)),
                                 ),
                                 Expanded(
@@ -1544,7 +1577,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           color: AppTheme.salesColor)),
                                 ),
                                 Expanded(
@@ -1553,7 +1586,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                       textAlign: TextAlign.right,
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                          fontSize: 14,
                                           color: AppTheme.salesColor)),
                                 ),
                                 SizedBox(width: 28),
@@ -1669,7 +1702,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                               const Text('الملخص',
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
-                                      fontSize: 12,
+                                      fontSize: 14,
                                       color: AppTheme.salesColor)),
                             ],
                           ),
@@ -1692,8 +1725,8 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                               const SizedBox(width: 6),
                               const Text('الخصم',
                                   style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
                                       color: AppTheme.purchasesColor)),
                               const Spacer(),
                               SizedBox(
@@ -1706,7 +1739,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                                           decimal: true),
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 14,
                                       color: AppTheme.purchasesColor,
                                       fontWeight: FontWeight.bold),
                                   decoration: InputDecoration(
@@ -1743,13 +1776,112 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                             ],
                           ),
                           const SizedBox(height: 14),
+
+                          // Down Payment (sales invoices only)
+                          if (!_isQuote) ...[
+                            Row(
+                              children: [
+                                const Icon(Icons.payments_outlined,
+                                    size: 16, color: Color(0xFF1565C0)),
+                                const SizedBox(width: 6),
+                                const Text('Down Payment',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF1565C0))),
+                                const Spacer(),
+                                SizedBox(
+                                  width: 120,
+                                  child: TextField(
+                                    controller: _downPaymentCtrl,
+                                    onChanged: (_) => setState(() {}),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Color(0xFF1565C0),
+                                        fontWeight: FontWeight.bold),
+                                    decoration: InputDecoration(
+                                      hintText: '0',
+                                      isDense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 10, vertical: 8),
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          borderSide: const BorderSide(
+                                              color: Color(0xFF90CAF9))),
+                                      focusedBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          borderSide: const BorderSide(
+                                              color: Color(0xFF1565C0),
+                                              width: 1.5)),
+                                      enabledBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          borderSide: const BorderSide(
+                                              color: Color(0xFF90CAF9))),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            // Remaining Amount
+                            if (_downPaymentValue > 0) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE3F2FD),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: const Color(0xFF90CAF9)),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Row(
+                                      children: [
+                                        Icon(Icons.access_time_rounded,
+                                            size: 14,
+                                            color: Color(0xFF1565C0)),
+                                        SizedBox(width: 4),
+                                        Text('Remaining Amount',
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                color: Color(0xFF1565C0),
+                                                fontWeight:
+                                                    FontWeight.bold)),
+                                      ],
+                                    ),
+                                    Text(
+                                      CurrencyHelper.format(
+                                          _remainingAmount),
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          color: Color(0xFF1565C0),
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                          ],
+
                           const Divider(height: 1),
                           const SizedBox(height: 14),
 
-                          // الإجمالي الكلي
+                          // Total Amount
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 16),
+                                horizontal: 16, vertical: 14),
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
                                 colors: [
@@ -1773,29 +1905,18 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                               mainAxisAlignment:
                                   MainAxisAlignment.spaceBetween,
                               children: [
-                                const Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  children: [
-                                    Text('الإجمالي الكلي',
-                                        style: TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w500)),
-                                    SizedBox(height: 2),
-                                    Text('بعد الخصم',
-                                        style: TextStyle(
-                                            color: Colors.white54,
-                                            fontSize: 12)),
-                                  ],
-                                ),
+                                const Text('TOTAL AMOUNT',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.5)),
                                 Text(
                                   CurrencyHelper.format(_grandTotal),
                                   style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 24,
+                                    color: Color(0xFFFFFF00),
+                                    fontSize: 13,
                                     fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.5,
                                   ),
                                 ),
                               ],
@@ -1850,17 +1971,23 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                     flex: 3,
                     child: ElevatedButton.icon(
                       onPressed: _saveInvoice,
-                      icon: const Icon(Icons.save_rounded, size: 18),
+                      icon: Icon(
+                        _isQuote ? Icons.description_outlined : Icons.save_rounded,
+                        size: 18),
                       label: Text(
                         widget.editInvoice != null
                             ? 'حفظ التعديل'
-                            : 'حفظ وعرض الفاتورة',
+                            : _isQuote
+                                ? 'حفظ فاتورة العرض'
+                                : 'حفظ وعرض الفاتورة',
                         style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.bold)),
+                            fontSize: 14, fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                         padding:
                             const EdgeInsets.symmetric(vertical: 14),
-                        backgroundColor: AppTheme.salesColor,
+                        backgroundColor: _isQuote
+                            ? const Color(0xFF7B5EA7)
+                            : AppTheme.salesColor,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
@@ -1880,7 +2007,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
   InputDecoration _inputDeco(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+      labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
       prefixIcon: Icon(icon, color: AppTheme.salesColor, size: 22),
       filled: true,
       fillColor: Colors.white,
@@ -1944,7 +2071,7 @@ class _SheetSection extends StatelessWidget {
                 Text(title,
                     style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 12,
+                        fontSize: 14,
                         color: AppTheme.salesColor)),
                 if (trailing != null) ...[
                   const Spacer(),
@@ -1985,9 +2112,9 @@ class _SummaryRow extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textGrey)),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textGrey)),
         Text(value,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textDark)),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textDark)),
       ],
     );
   }
@@ -2040,8 +2167,8 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     final mq = MediaQuery.of(context).size;
     // حجم حقل الإدخال يتناسب مع عرض الشاشة
     final fieldH   = mq.width < 360 ? 36.0 : (mq.width < 480 ? 40.0 : 44.0);
-    final fontSize = mq.width < 360 ? 11.0 : 12.0;
-    final labelFS  = mq.width < 360 ? 10.0 : 11.0;
+    final fontSize = mq.width < 360 ? 13.0 : 14.0;
+    final labelFS  = mq.width < 360 ? 12.0 : 13.0;
 
     // ألوان مؤشر المخزون
     Color stockBg    = Colors.grey.shade50;
@@ -2118,7 +2245,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
                           ),
                         )
                       : DropdownButtonFormField<InventoryItem>(
-                          value: selectedItem,
+                          initialValue: selectedItem,
                           isExpanded: true,
                           menuMaxHeight: 240,
                           decoration: InputDecoration(

@@ -117,29 +117,30 @@ class _PurchasesScreenState extends State<PurchasesScreen>
   }
 
   void _showEditDialog(Purchase purchase) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PurchaseDialog(
-        existingPurchase: purchase,
-        onSave: (updated) async {
-          await DatabaseService.updatePurchaseWithStockAdjustment(
-              purchase, updated);
-          DatabaseService.refreshData();
-        },
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _PurchaseDialog(
+          existingPurchase: purchase,
+          onSave: (updated) async {
+            await DatabaseService.updatePurchaseWithStockAdjustment(purchase, updated);
+            DatabaseService.refreshData();
+          },
+        ),
       ),
     );
   }
 
   void _showAddDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PurchaseDialog(
-        onSave: (purchase) async {
-          await DatabaseService.addPurchaseWithStockUpdate(purchase);
-          DatabaseService.refreshData();
-        },
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _PurchaseDialog(
+          onSave: (purchase) async {
+            await DatabaseService.addPurchaseWithStockUpdate(purchase);
+            DatabaseService.refreshData();
+          },
+        ),
       ),
     );
   }
@@ -147,27 +148,22 @@ class _PurchasesScreenState extends State<PurchasesScreen>
   void _confirmDelete(Purchase purchase) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete Purchase'),
-        content: const Text(
-            'Delete this purchase? Stock quantity will be reversed automatically.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await DatabaseService.deletePurchaseWithStockUpdate(purchase.id);
-              DatabaseService.refreshData();
-            },
-            style:
-                ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (_) => _DeletePurchaseDialog(
+          purchase: purchase,
+          onConfirmed: () async {
+            await DatabaseService.deletePurchaseWithStockUpdate(purchase.id);
+            DatabaseService.refreshData();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم حذف "${purchase.itemName}" وتعديل المخزن'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          },
+        ),
     );
   }
 
@@ -1120,16 +1116,25 @@ class _PurchaseDialogState extends State<_PurchaseDialog> {
 
   void _selectItem(InventoryItem item) {
     setState(() {
-      _selectedItem = item;
+      _selectedItem    = item;
       _selectedItemName = item.itemName;
       _itemSearchCtrl.text = item.itemName;
-      _showDropdown = false;
-      // Auto-fill unit price from inventory
-      if (_priceCtrl.text.isEmpty) {
-        _priceCtrl.text = item.unitPrice % 1 == 0
-            ? item.unitPrice.toInt().toString()
-            : item.unitPrice.toStringAsFixed(2);
-      }
+      _showDropdown    = false;
+
+      // ── عرض بيانات المخزن: اسم المجهّز (category) ────────────────
+      // يُعرض دائماً — المستخدم يمكنه تعديله قبل الحفظ
+      _supplierCtrl.text = (item.category.isNotEmpty && item.category != 'عام')
+          ? item.category
+          : '';
+
+      // ── عرض بيانات المخزن: سعر القطعة ────────────────────────────
+      // يُعرض دائماً من المخزن — لن يُحدَّث المخزن بهذه القيمة عند الحفظ
+      _priceCtrl.text = item.unitPrice % 1 == 0
+          ? item.unitPrice.toInt().toString()
+          : item.unitPrice.toStringAsFixed(2);
+
+      // ── عرض بيانات المخزن: الملاحظات (description) ───────────────
+      _notesCtrl.text = item.description;
     });
   }
 
@@ -1151,52 +1156,34 @@ class _PurchaseDialogState extends State<_PurchaseDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final mq      = MediaQuery.of(context);
-    final dialogW = mq.size.width  * 0.96;
-    final dialogH = mq.size.height * 0.94;
+    final mq = MediaQuery.of(context);
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: EdgeInsets.zero,
-      child: SizedBox(
-        width:  dialogW,
-        height: dialogH,
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: AppTheme.purchasesColor,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Row(
+          children: [
+            Icon(_isEditMode ? Icons.edit_rounded : Icons.add_shopping_cart_rounded, size: 20),
+            const SizedBox(width: 8),
+            Text(_isEditMode ? 'تعديل مشتريات' : 'مشتريات جديدة',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+      body: Form(
+        key: _formKey,
         child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // ── Dialog Title ─────────────────────────────────────
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppTheme.purchasesColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(
-                          _isEditMode
-                              ? Icons.edit_rounded
-                              : Icons.add_shopping_cart_rounded,
-                          color: AppTheme.purchasesColor,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          _isEditMode ? 'تعديل مشتريات' : 'مشتريات جديدة',
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
+          padding: EdgeInsets.fromLTRB(20, 20, 20, mq.viewInsets.bottom + 100),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
 
                   // ── 1. Item Name – Dropdown from inventory ────────────
                   Column(
@@ -1463,18 +1450,27 @@ class _PurchaseDialogState extends State<_PurchaseDialog> {
                       if (_selectedItem != null && !_showDropdown)
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
-                          child: Row(
-                            children: [
-                              Icon(Icons.check_circle_rounded,
-                                  size: 14,
-                                  color: AppTheme.salesColor),
-                              const SizedBox(width: 4),
-                              Text(
-                                'التصنيف: ${_selectedItem!.category}  |  المخزون: ${_selectedItem!.quantity % 1 == 0 ? _selectedItem!.quantity.toInt() : _selectedItem!.quantity.toStringAsFixed(1)} ${_selectedItem!.unit}',
-                                style: const TextStyle(
-                                    fontSize: 12, color: AppTheme.textGrey),
-                              ),
-                            ],
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.purchasesColor.withValues(alpha: 0.07),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppTheme.purchasesColor.withValues(alpha: 0.2)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.check_circle_rounded,
+                                    size: 14, color: AppTheme.salesColor),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'تم ملء البيانات من المخزن  |  المخزون الحالي: ${_selectedItem!.quantity % 1 == 0 ? _selectedItem!.quantity.toInt() : _selectedItem!.quantity.toStringAsFixed(1)} ${_selectedItem!.unit}',
+                                    style: const TextStyle(
+                                        fontSize: 12, color: AppTheme.textGrey),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                     ],
@@ -1590,8 +1586,6 @@ class _PurchaseDialogState extends State<_PurchaseDialog> {
                   ),
                 ],
               ),
-            ),
-          ),
         ),
       ),
     );
@@ -1635,6 +1629,128 @@ class _PurchaseDialogState extends State<_PurchaseDialog> {
       validator: required
           ? (v) => (v == null || v.isEmpty) ? '$label مطلوب' : null
           : null,
+    );
+  }
+}
+
+// ── شاشة تأكيد حذف المشتريات الأصيلة ────────────────────────────────────────
+class _DeletePurchaseDialog extends StatelessWidget {
+  final Purchase purchase;
+  final Future<void> Function() onConfirmed;
+  const _DeletePurchaseDialog({required this.purchase, required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      titlePadding: EdgeInsets.zero,
+      title: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: const BoxDecoration(
+          color: AppTheme.errorColor,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Text('حذف مشتريات', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+          ],
+        ),
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'سيتم عكس الكمية في المخزن تلقائياً.',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _PurchaseInfoTile(icon: Icons.inventory_2_outlined, label: 'الصنف', value: purchase.itemName),
+          _PurchaseInfoTile(icon: Icons.store_outlined, label: 'المورد', value: purchase.supplierName.isEmpty ? '—' : purchase.supplierName),
+          _PurchaseInfoTile(icon: Icons.numbers_rounded, label: 'الكمية', value: purchase.quantity % 1 == 0 ? purchase.quantity.toInt().toString() : purchase.quantity.toStringAsFixed(2)),
+          _PurchaseInfoTile(icon: Icons.attach_money_rounded, label: 'الإجمالي', value: CurrencyHelper.format(purchase.totalPrice)),
+          const SizedBox(height: 8),
+          const Text('لا يمكن التراجع عن هذا الإجراء.', style: TextStyle(color: AppTheme.textGrey, fontSize: 12)),
+          const SizedBox(height: 8),
+        ],
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      actions: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('لا، تراجع', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  foregroundColor: AppTheme.textGrey,
+                  side: const BorderSide(color: AppTheme.textGrey),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await onConfirmed();
+                },
+                icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                label: const Text('نعم، احذف', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: AppTheme.errorColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _PurchaseInfoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _PurchaseInfoTile({required this.icon, required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: AppTheme.textGrey),
+          const SizedBox(width: 8),
+          Text('$label: ', style: const TextStyle(color: AppTheme.textGrey, fontSize: 13)),
+          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+        ],
+      ),
     );
   }
 }

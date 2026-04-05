@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../models/user_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_screen.dart';

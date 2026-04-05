@@ -58,16 +58,20 @@ class DatabaseService {
       StreamController<List<Invoice>>.broadcast();
   static final _purchasesController =
       StreamController<List<Purchase>>.broadcast();
+  static final _usersController =
+      StreamController<List<AppUser>>.broadcast();
 
   // Cache last emitted values — new subscribers get current data immediately
   static List<InventoryItem> _lastInventory = [];
   static List<Invoice> _lastInvoices = [];
   static List<Purchase> _lastPurchases = [];
+  static List<AppUser> _lastUsers = [];
 
   // Public read-only access to cached data (for instant UI computation)
   static List<InventoryItem> get lastInventory  => List.unmodifiable(_lastInventory);
   static List<Invoice>       get lastInvoices   => List.unmodifiable(_lastInvoices);
   static List<Purchase>      get lastPurchases  => List.unmodifiable(_lastPurchases);
+  static List<AppUser>       get lastUsers      => List.unmodifiable(_lastUsers);
 
   static Stream<List<InventoryItem>> get inventoryStream {
     late StreamController<List<InventoryItem>> sc;
@@ -111,6 +115,20 @@ class DatabaseService {
     return sc.stream;
   }
 
+  static Stream<List<AppUser>> get usersStream {
+    late StreamController<List<AppUser>> sc;
+    sc = StreamController<List<AppUser>>(
+      onListen: () {
+        sc.add(List.from(_lastUsers));
+        _usersController.stream.listen(
+          (v) { if (!sc.isClosed) sc.add(v); },
+          onDone: () { if (!sc.isClosed) sc.close(); },
+        );
+      },
+    );
+    return sc.stream;
+  }
+
   static void _emitInventory(List<InventoryItem> items) {
     _lastInventory = items;
     _inventoryController.add(items);
@@ -126,10 +144,16 @@ class DatabaseService {
     _purchasesController.add(purchases);
   }
 
+  static void _emitUsers(List<AppUser> users) {
+    _lastUsers = users;
+    _usersController.add(users);
+  }
+
   // Firestore subscriptions
   static StreamSubscription? _invSub;
   static StreamSubscription? _invItemSub;
   static StreamSubscription? _purchSub;
+  static StreamSubscription? _usersSub;
 
   static FirebaseFirestore get _db {
     if (_firestore == null) {
@@ -205,6 +229,7 @@ class DatabaseService {
         _loadInventoryFromRest(),
         _loadInvoicesFromRest(),
         _loadPurchasesFromRest(),
+        _loadUsersFromRest(),
       ]);
       final anyOk = results.any((ok) => ok == true);
       if (!anyOk) {
@@ -246,6 +271,7 @@ class DatabaseService {
   static Timer? _refreshTimer;
 
   /// Connectivity check — single fast REST call
+  // ignore: unused_element
   static Future<bool> _checkFirestoreViaRest() async {
     final url = Uri.parse('$_restBase/inventory?pageSize=1&key=$_apiKey');
     for (int i = 1; i <= 2; i++) {
@@ -446,6 +472,8 @@ class DatabaseService {
           notes: m['notes'] as String? ?? '',
           totalAmount: (m['totalAmount'] as num?)?.toDouble() ?? 0,
           discount: (m['discount'] as num?)?.toDouble() ?? 0,
+          invoiceType: m['invoiceType'] as String? ?? 'sale',
+          downPayment: (m['downPayment'] as num?)?.toDouble() ?? 0,
         );
       }).toList()..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate));
 
@@ -496,6 +524,42 @@ class DatabaseService {
     }
   }
 
+  static Future<bool> _loadUsersFromRest() async {
+    try {
+      final docs = await _fetchCollectionRest(_userCol);
+      if (docs == null) {
+        if (kDebugMode) debugPrint('❌ Users REST returned null');
+        _emitUsers(_getAllLocalUsers());
+        return false;
+      }
+      final users = docs.map((m) {
+        return AppUser.fromMap(Map<String, dynamic>.from(m));
+      }).toList();
+      // Update local Hive cache
+      for (final u in users) {
+        _usersBox.put(u.username, u.toMap());
+      }
+      _emitUsers(users..sort((a, b) => a.username.compareTo(b.username)));
+      if (kDebugMode) debugPrint('✅ Users: ${users.length} loaded from Firebase');
+      return true;
+    } catch (e) {
+      if (kDebugMode) debugPrint('❌ _loadUsersFromRest error: $e');
+      _emitUsers(_getAllLocalUsers());
+      return false;
+    }
+  }
+
+  static List<AppUser> _getAllLocalUsers() {
+    final List<AppUser> result = [];
+    for (final key in _usersBox.keys) {
+      try {
+        final u = Map<String, dynamic>.from(_usersBox.get(key) as Map);
+        result.add(AppUser.fromMap(u));
+      } catch (_) {}
+    }
+    return result;
+  }
+
   static DateTime _parseTimestamp(dynamic raw) {
     if (raw == null) return DateTime.now();
     if (raw is String) {
@@ -519,6 +583,7 @@ class DatabaseService {
       _loadInventoryFromRest(),
       _loadInvoicesFromRest(),
       _loadPurchasesFromRest(),
+      _loadUsersFromRest(),
     ]);
     final anyFailed = results.any((ok) => ok == false);
     if (anyFailed) {
@@ -550,6 +615,7 @@ class DatabaseService {
         _loadInventoryFromRest(),
         _loadInvoicesFromRest(),
         _loadPurchasesFromRest(),
+        _loadUsersFromRest(),
       ]);
       if (results.any((ok) => ok == false)) {
         _setFirebaseAvailable(false);
@@ -610,6 +676,24 @@ class DatabaseService {
         _emitPurchases(_getAllLocalPurchases());
       },
     );
+    // Real-time listener for users collection
+    _usersSub?.cancel();
+    _usersSub = _db.collection(_userCol).snapshots().listen(
+      (snap) {
+        final users = snap.docs.map((doc) {
+          return AppUser.fromMap(Map<String, dynamic>.from(doc.data()));
+        }).toList()..sort((a, b) => a.username.compareTo(b.username));
+        for (final u in users) {
+          _usersBox.put(u.username, u.toMap());
+        }
+        _emitUsers(users);
+        if (kDebugMode) debugPrint('🔄 Users snapshot: ${users.length} users updated');
+      },
+      onError: (e) {
+        if (kDebugMode) debugPrint('Users listener error: $e');
+        _emitUsers(_getAllLocalUsers());
+      },
+    );
   }
 
   static void _pushLocalToStreams() {
@@ -619,6 +703,8 @@ class DatabaseService {
       ..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate)));
     _emitPurchases(_getAllLocalPurchases()
       ..sort((a, b) => b.date.compareTo(a.date)));
+    _emitUsers(_getAllLocalUsers()
+      ..sort((a, b) => a.username.compareTo(b.username)));
   }
 
   // ─── ADMIN ────────────────────────────────────────────────────────────────
@@ -648,12 +734,9 @@ class DatabaseService {
 
   static Future<void> _ensureDefaultAdmin() async {
     try {
-      final snap = await _db
-          .collection(_userCol)
-          .where('username', isEqualTo: 'admin')
-          .limit(1)
-          .get();
-      if (snap.docs.isEmpty) {
+      // Check via REST-loaded users (already loaded at this point)
+      final adminExists = _lastUsers.any((u) => u.username == 'admin');
+      if (!adminExists) {
         final adminUser = AppUser(
           username: 'admin',
           password: 'admin123',
@@ -672,9 +755,8 @@ class DatabaseService {
           canDeleteInventory: true,
           canExportReports: true,
         );
-        final map = adminUser.toMap();
-        map['createdAt'] = FieldValue.serverTimestamp();
-        await _db.collection(_userCol).doc('admin').set(map);
+        await _putUserRest('admin', adminUser.toMap());
+        if (kDebugMode) debugPrint('✅ Default admin created via REST');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('_ensureDefaultAdmin: $e');
@@ -683,25 +765,20 @@ class DatabaseService {
 
   // ─── LOGIN ────────────────────────────────────────────────────────────────
   static Future<AppUser?> loginAsync(String username, String password) async {
+    // Always reload users from Firebase first to get the latest passwords
     if (_firebaseAvailable) {
       try {
-        final snap = await _db
-            .collection(_userCol)
-            .where('username', isEqualTo: username)
-            .where('password', isEqualTo: password)
-            .limit(1)
-            .get()
-            .timeout(const Duration(seconds: 8));
-        if (snap.docs.isNotEmpty) {
-          final d = Map<String, dynamic>.from(snap.docs.first.data());
-          return AppUser.fromMap(d);
-        }
+        await _loadUsersFromRest();
       } catch (e) {
-        if (kDebugMode) debugPrint('Firebase login failed: $e');
-        _setFirebaseAvailable(false);
+        if (kDebugMode) debugPrint('loginAsync refresh failed: $e');
       }
     }
-    // Local fallback
+    // Check the freshly-loaded REST users list
+    final fromRest = _lastUsers.where(
+        (u) => u.username == username && u.password == password);
+    if (fromRest.isNotEmpty) return fromRest.first;
+
+    // Local Hive fallback (offline mode)
     for (final key in _usersBox.keys) {
       final u = Map<String, dynamic>.from(_usersBox.get(key) as Map);
       if (u['username'] == username && u['password'] == password) {
@@ -742,48 +819,88 @@ class DatabaseService {
     return result;
   }
 
-  /// Save (create or update) a user
+  /// Save (create or update) a user — always overwrites so password changes are persisted.
+  /// Uses REST API (same transport as reads) to avoid Firestore SDK web issues.
   static Future<void> saveUser(AppUser user) async {
     final map = user.toMap();
-    // Save locally
+
+    // 1) Save locally first (instant UI update)
     _usersBox.put(user.username, map);
-    // Save to Firestore
+    _emitUsers(_getAllLocalUsers()..sort((a, b) => a.username.compareTo(b.username)));
+
+    // 2) Write to Firebase via REST (PUT = full document overwrite, all fields)
     if (_firebaseAvailable) {
       try {
-        await _db
-            .collection(_userCol)
-            .doc(user.username)
-            .set(map, SetOptions(merge: true));
+        final ok = await _putUserRest(user.username, map);
+        if (kDebugMode) {
+          debugPrint(ok
+              ? '✅ saveUser REST PUT succeeded for "${user.username}"'
+              : '⚠️ saveUser REST PUT failed for "${user.username}"');
+        }
+        // Reload from Firebase to confirm sync and update all subscribers
+        await _loadUsersFromRest();
       } catch (e) {
-        if (kDebugMode) debugPrint('saveUser Firebase failed: $e');
+        if (kDebugMode) debugPrint('saveUser REST error: $e');
       }
     }
   }
 
-  /// Delete a user by username
+  /// Full-overwrite a user document via Firestore REST (PATCH without updateMask = replace all).
+  static Future<bool> _putUserRest(
+      String docId, Map<String, dynamic> fields) async {
+    try {
+      // Firestore REST PATCH without updateMask replaces the entire document
+      final url = Uri.parse('$_restBase/$_userCol/$docId?key=$_apiKey');
+      final body = json.encode({
+        'fields': fields.map((k, v) => MapEntry(k, _toFirestoreValue(v))),
+      });
+      final resp = await http
+          .patch(url, headers: {'Content-Type': 'application/json'}, body: body)
+          .timeout(const Duration(seconds: 12));
+      if (kDebugMode) debugPrint('_putUserRest $docId → HTTP ${resp.statusCode}');
+      if (resp.statusCode != 200 && kDebugMode) {
+        debugPrint('_putUserRest response body: ${resp.body}');
+      }
+      return resp.statusCode == 200;
+    } catch (e) {
+      if (kDebugMode) debugPrint('_putUserRest error: $e');
+      return false;
+    }
+  }
+
+  /// Delete a user by username — uses REST API
   static Future<void> deleteUser(String username) async {
     _usersBox.delete(username);
+    _emitUsers(_getAllLocalUsers()..sort((a, b) => a.username.compareTo(b.username)));
     if (_firebaseAvailable) {
       try {
-        await _db.collection(_userCol).doc(username).delete();
+        final url = Uri.parse('$_restBase/$_userCol/$username?key=$_apiKey');
+        final resp = await http
+            .delete(url)
+            .timeout(const Duration(seconds: 10));
+        if (kDebugMode) debugPrint('deleteUser REST → HTTP ${resp.statusCode}');
+        await _loadUsersFromRest();
       } catch (e) {
-        if (kDebugMode) debugPrint('deleteUser Firebase failed: $e');
+        if (kDebugMode) debugPrint('deleteUser REST error: $e');
       }
     }
   }
 
-  /// Check if a username already exists
+  /// Check if a username already exists — uses local cache + REST-loaded users
   static Future<bool> usernameExists(String username) async {
+    // Check local Hive cache
     if (_usersBox.containsKey(username)) return true;
+    // Check REST-loaded users list
+    if (_lastUsers.any((u) => u.username == username)) return true;
+    // Final check: fetch from Firebase via REST
     if (_firebaseAvailable) {
       try {
-        final snap = await _db
-            .collection(_userCol)
-            .where('username', isEqualTo: username)
-            .limit(1)
-            .get()
+        final url = Uri.parse('$_restBase/$_userCol/$username?key=$_apiKey');
+        final resp = await http
+            .get(url)
             .timeout(const Duration(seconds: 6));
-        return snap.docs.isNotEmpty;
+        // 200 = doc exists, 404 = doesn't exist
+        return resp.statusCode == 200;
       } catch (_) {}
     }
     return false;
@@ -825,7 +942,12 @@ class DatabaseService {
 
   // ─── INVOICE OPERATIONS ───────────────────────────────────────────────────
   static Future<String?> addInvoiceWithStockDeduction(Invoice invoice) async {
-    // Validate stock — use _lastInventory cache (always populated via REST)
+    // فاتورة العرض: لا تحتاج تحقق من المخزون ولا خصم
+    if (invoice.isQuote) {
+      return _saveInvoiceRecord(invoice);
+    }
+
+    // فاتورة البيع: التحقق من المخزون أولاً
     for (final item in invoice.items) {
       final inv = await _findInventoryItemByName(item.itemName);
       if (inv == null) return 'المادة "${item.itemName}" غير موجودة في المخزون.';
@@ -834,7 +956,7 @@ class DatabaseService {
             'المتاح: ${inv.quantity.toStringAsFixed(0)} ${inv.unit}, المطلوب: ${item.quantity.toStringAsFixed(0)}';
       }
     }
-    // Deduct stock
+    // خصم المخزون عند البيع فقط
     for (final item in invoice.items) {
       final inv = await _findInventoryItemByName(item.itemName);
       if (inv != null) await _updateInventoryQuantity(inv.id, -item.quantity);
@@ -857,6 +979,8 @@ class DatabaseService {
       notes: invoice.notes,
       discount: invoice.discount,
       totalAmount: invoice.totalAmount,
+      invoiceType: invoice.invoiceType,
+      downPayment: invoice.downPayment,
     );
     _lastInvoices = [newInv, ..._lastInvoices]
       ..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate));
@@ -896,6 +1020,104 @@ class DatabaseService {
     return null;
   }
 
+  // ── حفظ سجل فاتورة (بدون خصم مخزون — للعروض) ─────────────────────────────
+  static Future<String?> _saveInvoiceRecord(Invoice invoice) async {
+    final invNum = await generateUniqueInvoiceNumber();
+    final invId = invoice.id.isEmpty ? const Uuid().v4() : invoice.id;
+    final map = _buildInvoiceMap(invId, invNum, invoice);
+    _invoicesBox.put(invId, map);
+    final newInv = Invoice(
+      id: invId,
+      invoiceNumber: invNum,
+      customerName: invoice.customerName,
+      invoiceDate: invoice.invoiceDate,
+      items: invoice.items,
+      notes: invoice.notes,
+      discount: invoice.discount,
+      totalAmount: invoice.totalAmount,
+      invoiceType: invoice.invoiceType,
+      downPayment: invoice.downPayment,
+    );
+    _lastInvoices = [newInv, ..._lastInvoices]
+      ..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate));
+    _emitInvoices(_lastInvoices);
+    if (_firebaseAvailable) {
+      try {
+        if (kIsWeb) {
+          final restMap = Map<String, dynamic>.from(map);
+          restMap['invoiceDate'] = invoice.invoiceDate.toUtc().toIso8601String();
+          restMap['createdAt'] = DateTime.now().toUtc().toIso8601String();
+          restMap['items'] = invoice.items.map((it) => {
+            'sequence': it.sequence, 'itemName': it.itemName,
+            'quantity': it.quantity, 'unitPrice': it.unitPrice,
+            'totalPrice': it.totalPrice,
+          }).toList();
+          await _putDocumentRest(_invoicesCol, invId, restMap);
+        } else {
+          final fb = Map<String, dynamic>.from(map);
+          fb['invoiceDate'] = Timestamp.fromDate(invoice.invoiceDate);
+          fb['createdAt'] = FieldValue.serverTimestamp();
+          await _db.collection(_invoicesCol).doc(invId).set(fb);
+        }
+        unawaited(_loadInvoicesFromRest());
+      } catch (e) {
+        if (kDebugMode) debugPrint('Firebase saveQuote error: $e');
+      }
+    }
+    return null;
+  }
+
+  // ── تحويل فاتورة عرض إلى فاتورة بيع ──────────────────────────────────────
+  static Future<String?> convertQuoteToSale(Invoice quote) async {
+    // التحقق من توفر المخزون لكل المواد
+    for (final item in quote.items) {
+      final inv = await _findInventoryItemByName(item.itemName);
+      if (inv == null) return 'المادة "${item.itemName}" غير موجودة في المخزون.';
+      if (inv.quantity < item.quantity) {
+        return 'كمية غير كافية للمادة "${item.itemName}".\n'
+            'المتاح: ${inv.quantity.toStringAsFixed(0)} ${inv.unit}, المطلوب: ${item.quantity.toStringAsFixed(0)}';
+      }
+    }
+    // خصم المخزون
+    for (final item in quote.items) {
+      final inv = await _findInventoryItemByName(item.itemName);
+      if (inv != null) await _updateInventoryQuantity(inv.id, -item.quantity);
+    }
+    // تحديث نوع الفاتورة إلى بيع
+    final updatedMap = _buildInvoiceMap(quote.id, quote.invoiceNumber, quote);
+    updatedMap['invoiceType'] = 'sale';
+    _invoicesBox.put(quote.id, updatedMap);
+
+    // تحديث الذاكرة
+    _lastInvoices = _lastInvoices.map((inv) {
+      if (inv.id != quote.id) return inv;
+      return Invoice(
+        id: inv.id, invoiceNumber: inv.invoiceNumber,
+        customerName: inv.customerName, invoiceDate: inv.invoiceDate,
+        items: inv.items, notes: inv.notes,
+        discount: inv.discount, totalAmount: inv.totalAmount,
+        invoiceType: 'sale',
+        downPayment: inv.downPayment,
+      );
+    }).toList();
+    _emitInvoices(_lastInvoices);
+
+    if (_firebaseAvailable) {
+      try {
+        if (kIsWeb) {
+          await _patchDocumentRest(_invoicesCol, quote.id, {'invoiceType': 'sale'});
+        } else {
+          await _db.collection(_invoicesCol).doc(quote.id).update({'invoiceType': 'sale'});
+        }
+        unawaited(_loadInvoicesFromRest());
+        unawaited(_loadInventoryFromRest());
+      } catch (e) {
+        if (kDebugMode) debugPrint('convertQuoteToSale firebase: $e');
+      }
+    }
+    return null;
+  }
+
   static Map<String, dynamic> _buildInvoiceMap(
       String id, int num, Invoice inv) {
     return {
@@ -915,11 +1137,38 @@ class DatabaseService {
       'notes': inv.notes,
       'totalAmount': inv.totalAmount,
       'discount': inv.discount,
+      'invoiceType': inv.invoiceType,
+      'downPayment': inv.downPayment,
     };
   }
 
   static Future<String?> updateInvoiceWithStockAdjustment(
       Invoice oldInvoice, Invoice newInvoice) async {
+    // فاتورة العرض: لا تحتاج تعديل مخزون
+    if (newInvoice.isQuote) {
+      final map = _buildInvoiceMap(newInvoice.id, newInvoice.invoiceNumber, newInvoice);
+      _invoicesBox.put(newInvoice.id, map);
+      _lastInvoices = _lastInvoices.map((i) => i.id == newInvoice.id ? newInvoice : i).toList();
+      _emitInvoices(_lastInvoices);
+      if (_firebaseAvailable) {
+        try {
+          if (kIsWeb) {
+            final restMap = Map<String, dynamic>.from(map);
+            restMap['invoiceDate'] = newInvoice.invoiceDate.toUtc().toIso8601String();
+            restMap['items'] = newInvoice.items.map((it) => {'sequence': it.sequence, 'itemName': it.itemName, 'quantity': it.quantity, 'unitPrice': it.unitPrice, 'totalPrice': it.totalPrice}).toList();
+            await _putDocumentRest(_invoicesCol, newInvoice.id, restMap);
+          } else {
+            final fb = Map<String, dynamic>.from(map);
+            fb['invoiceDate'] = Timestamp.fromDate(newInvoice.invoiceDate);
+            await _db.collection(_invoicesCol).doc(newInvoice.id).set(fb);
+          }
+          unawaited(_loadInvoicesFromRest());
+        } catch (e) { if (kDebugMode) debugPrint('Firebase updateQuote: $e'); }
+      }
+      return null;
+    }
+
+    // فاتورة البيع: استعادة المخزون القديم ثم التحقق والخصم
     // Restore old stock
     for (final item in oldInvoice.items) {
       final inv = await _findInventoryItemByName(item.itemName);
@@ -996,10 +1245,13 @@ class DatabaseService {
       }
     }
     if (inv != null) {
-      for (final item in inv.items) {
-        final invItem = await _findInventoryItemByName(item.itemName);
-        if (invItem != null) {
-          await _updateInventoryQuantity(invItem.id, item.quantity);
+      // فاتورة العرض: لا تستعيد مخزوناً لأنه لم يُخصم أصلاً
+      if (!inv.isQuote) {
+        for (final item in inv.items) {
+          final invItem = await _findInventoryItemByName(item.itemName);
+          if (invItem != null) {
+            await _updateInventoryQuantity(invItem.id, item.quantity);
+          }
         }
       }
     }
@@ -1100,8 +1352,8 @@ class DatabaseService {
 
     final existing = await _findInventoryItemByName(purchase.itemName);
     if (existing != null) {
-      await _updateInventoryQuantity(existing.id, purchase.quantity,
-          newUnitPrice: purchase.unitPrice);
+      // فقط إضافة الكمية — لا يتم تعديل أي حقل آخر في المخزن
+      await _updateInventoryQuantity(existing.id, purchase.quantity);
     } else {
       final newId = const Uuid().v4();
       final itemMap = {
@@ -1235,8 +1487,8 @@ class DatabaseService {
     // ── 3. Apply new stock ───────────────────────────────────────────────
     final newInv = await _findInventoryItemByName(newPurchase.itemName);
     if (newInv != null) {
-      await _updateInventoryQuantity(newInv.id, newPurchase.quantity,
-          newUnitPrice: newPurchase.unitPrice);
+      // فقط إضافة الكمية — لا يتم تعديل أي حقل آخر في المخزن
+      await _updateInventoryQuantity(newInv.id, newPurchase.quantity);
     } else {
       // Item name changed – create new inventory entry
       final newId = const Uuid().v4();
@@ -1722,6 +1974,8 @@ class DatabaseService {
       notes: m['notes'] as String? ?? '',
       totalAmount: (m['totalAmount'] as num?)?.toDouble() ?? 0,
       discount: (m['discount'] as num?)?.toDouble() ?? 0,
+      invoiceType: m['invoiceType'] as String? ?? 'sale',
+      downPayment: (m['downPayment'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -1742,6 +1996,8 @@ class DatabaseService {
         'notes': inv.notes,
         'totalAmount': inv.totalAmount,
         'discount': inv.discount,
+        'invoiceType': inv.invoiceType,
+        'downPayment': inv.downPayment,
       };
 
   static Purchase _purchaseFromDoc(DocumentSnapshot doc) {

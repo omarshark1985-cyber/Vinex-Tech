@@ -141,26 +141,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   void _logout() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const LoginScreen()),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.errorColor),
-            child: const Text('Logout'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => _LogoutDialog(
+          onConfirmed: () {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const LoginScreen()),
+            );
+          },
       ),
     );
   }
@@ -269,7 +256,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                 icon: const Icon(Icons.admin_panel_settings_rounded),
                 onPressed: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const AdminScreen()),
+                  MaterialPageRoute(builder: (_) => AdminScreen(currentUser: widget.currentUser)),
                 ),
               ),
             ),
@@ -656,6 +643,92 @@ class _SummaryTile extends StatelessWidget {
                   fontSize: r.fs13, color: AppTheme.textGrey)),
         ],
       ),
+    );
+  }
+}
+
+// ── شاشة تأكيد تسجيل الخروج الأصيلة ─────────────────────────────────────────
+class _LogoutDialog extends StatelessWidget {
+  final VoidCallback onConfirmed;
+  const _LogoutDialog({required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      titlePadding: EdgeInsets.zero,
+      title: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppTheme.errorColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Text('تسجيل الخروج', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+          ],
+        ),
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      content: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.errorColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.25)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: AppTheme.errorColor, size: 22),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'هل أنت متأكد من تسجيل الخروج؟',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      actions: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('إلغاء', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  foregroundColor: AppTheme.textGrey,
+                  side: const BorderSide(color: AppTheme.textGrey),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  onConfirmed();
+                },
+                icon: const Icon(Icons.logout_rounded, size: 18),
+                label: const Text('تسجيل الخروج', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: AppTheme.errorColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

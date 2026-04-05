@@ -116,6 +116,7 @@ class _InventoryScreenState extends State<InventoryScreen>
     super.dispose();
   }
 
+  // ignore: unused_element
   void _load() async {
     final items = await DatabaseService.getAllInventoryItemsAsync();
     if (mounted) {
@@ -138,20 +139,33 @@ class _InventoryScreenState extends State<InventoryScreen>
   }
 
   void _showAddDialog([InventoryItem? existing]) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _InventoryDialog(
-        existing: existing,
-        onSave: (item) async {
-          if (existing != null) {
-            await DatabaseService.updateInventoryItem(existing.id, item);
-          } else {
-            await DatabaseService.addInventoryItem(item);
-          }
-          // Stream will auto-update; fallback load for offline mode
-          DatabaseService.refreshData();
-        },
+    _showTabularDialog(existingItem: existing);
+  }
+
+  void _showTabularDialog({InventoryItem? existingItem}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _TabularInventoryScreen(
+          existingItem: existingItem,
+          onSave: (item) async {
+            if (existingItem != null) {
+              await DatabaseService.updateInventoryItem(existingItem.id, item);
+            } else {
+              await DatabaseService.addInventoryItem(item);
+            }
+            DatabaseService.refreshData();
+          },
+          onSaveBatch: existingItem == null
+              ? (items) async {
+                  for (final item in items) {
+                    await DatabaseService.addInventoryItem(item);
+                  }
+                  DatabaseService.refreshData();
+                }
+              : null,
+          onClose: () => Navigator.of(context).pop(),
+        ),
       ),
     );
   }
@@ -159,25 +173,21 @@ class _InventoryScreenState extends State<InventoryScreen>
   void _confirmDelete(InventoryItem item) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete Item'),
-        content: const Text('Delete this inventory item?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await DatabaseService.deleteInventoryItem(item.id);
-              DatabaseService.refreshData();
-            },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.errorColor),
-            child: const Text('Delete'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => _DeleteInventoryDialog(
+          item: item,
+          onConfirmed: () async {
+            await DatabaseService.deleteInventoryItem(item.id);
+            DatabaseService.refreshData();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ تم حذف "${item.itemName}" من المخزن'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          },
       ),
     );
   }
@@ -341,100 +351,25 @@ class _InventoryScreenState extends State<InventoryScreen>
   }
 
   void _showImportErrors(List<String> errors) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: AppTheme.warningColor),
-            SizedBox(width: 8),
-            Text('تحذيرات الاستيراد'),
-          ],
-        ),
-        content: SizedBox(
-          width: 400,
-          child: ListView(
-            shrinkWrap: true,
-            children: errors
-                .map((e) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text('• $e',
-                          style: const TextStyle(fontSize: 12)),
-                    ))
-                .toList(),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.inventoryColor),
-            child: const Text('حسناً'),
-          ),
-        ],
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ImportErrorsScreen(errors: errors),
       ),
     );
   }
 
-  // ── SHOW TEMPLATE DIALOG ──────────────────────────────────────────────────
+  // ── SHOW IMPORT HELP ──────────────────────────────────────────────────────
   void _showImportHelp() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.help_outline_rounded, color: AppTheme.inventoryColor),
-            SizedBox(width: 8),
-            Text('دليل الاستيراد'),
-          ],
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ImportHelpScreen(
+          onExport: () {
+            Navigator.pop(context);
+            _exportToExcel();
+          },
         ),
-        content: const SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('تنسيق ملف Excel (.xlsx):',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              SizedBox(height: 8),
-              Text(
-                'الصف الأول: عنوان التقرير (تلقائي)\nالصف الثاني: رؤوس الأعمدة\nالصف الثالث فصاعداً: البيانات',
-                style: TextStyle(fontSize: 13),
-              ),
-              SizedBox(height: 10),
-              _ColRow(num: '1', name: 'اسم المادة', required: true),
-              _ColRow(num: '2', name: 'الفئة', required: false),
-              _ColRow(num: '3', name: 'الكمية', required: true),
-              _ColRow(num: '4', name: 'الوحدة (قطعة/كغ/...)', required: false),
-              _ColRow(num: '5', name: 'سعر الوحدة (IQD)', required: true),
-              _ColRow(num: '6', name: 'الحد الأدنى للمخزون', required: false),
-              _ColRow(num: '7', name: 'القيمة الإجمالية', required: false),
-              _ColRow(num: '8', name: 'الوصف', required: false),
-              SizedBox(height: 14),
-              Text('💡 نصيحة: صدّر الملف أولاً للحصول على التنسيق الصحيح،\nثم عدّله وأعد استيراده.',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textGrey,
-                      fontStyle: FontStyle.italic)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إغلاق')),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              _exportToExcel();
-            },
-            icon: const Icon(Icons.download_rounded, size: 16),
-            label: const Text('تصدير قالب'),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.inventoryColor),
-          ),
-        ],
       ),
     );
   }
@@ -626,81 +561,344 @@ class _InventoryScreenState extends State<InventoryScreen>
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddDialog(),
+        onPressed: () => _openTabularAdd(),
         backgroundColor: AppTheme.inventoryColor,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Add Item'),
+        icon: const Icon(Icons.table_rows_rounded),
+        label: const Text('إضافة مواد'),
       ),
     );
   }
 
+  void _openTabularAdd() {
+    _showTabularDialog();
+  }
+
   void _showImportMenu() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ImportMenuScreen(
+          onImport: () {
+            Navigator.pop(context);
+            _importFromExcel();
+          },
+          onHelp: () {
+            Navigator.pop(context);
+            _showImportHelp();
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ── شاشة تأكيد حذف عنصر المخزن الأصيلة ──────────────────────────────────────
+class _DeleteInventoryDialog extends StatelessWidget {
+  final InventoryItem item;
+  final Future<void> Function() onConfirmed;
+  const _DeleteInventoryDialog({required this.item, required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      titlePadding: EdgeInsets.zero,
+      title: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: const BoxDecoration(
+          color: AppTheme.errorColor,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Text('حذف الصنف', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+          ],
+        ),
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'حذف "${item.itemName}" من المخزن؟',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _InventoryInfoTile(icon: Icons.category_outlined, label: 'الفئة', value: item.category.isEmpty ? '—' : item.category),
+          _InventoryInfoTile(icon: Icons.numbers_rounded, label: 'الكمية', value: '${item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity.toStringAsFixed(2)} ${item.unit}'),
+          _InventoryInfoTile(icon: Icons.attach_money_rounded, label: 'سعر الوحدة', value: CurrencyHelper.format(item.unitPrice)),
+          const SizedBox(height: 8),
+          const Text('لا يمكن التراجع عن هذا الإجراء.', style: TextStyle(color: AppTheme.textGrey, fontSize: 12)),
+          const SizedBox(height: 8),
+        ],
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      actions: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('لا، تراجع', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  foregroundColor: AppTheme.textGrey,
+                  side: const BorderSide(color: AppTheme.textGrey),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await onConfirmed();
+                },
+                icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                label: const Text('نعم، احذف', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: AppTheme.errorColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _InventoryInfoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _InventoryInfoTile({required this.icon, required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: AppTheme.textGrey),
+          const SizedBox(width: 8),
+          Text('$label: ', style: const TextStyle(color: AppTheme.textGrey, fontSize: 13)),
+          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+        ],
+      ),
+    );
+  }
+}
+
+// ── شاشة قائمة الاستيراد الأصيلة ─────────────────────────────────────────────
+class _ImportMenuScreen extends StatelessWidget {
+  final VoidCallback onImport;
+  final VoidCallback onHelp;
+  const _ImportMenuScreen({required this.onImport, required this.onHelp});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: AppTheme.inventoryColor,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.upload_file_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('استيراد المخزون', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+      body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2)),
-            ),
-            const SizedBox(height: 20),
-            const Text('استيراد المخزون',
-                style:
-                    TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
             const Text('اختر ملف Excel (.xlsx) مُصدَّر من التطبيق',
-                style: TextStyle(color: AppTheme.textGrey, fontSize: 13)),
+                style: TextStyle(color: AppTheme.textGrey, fontSize: 14)),
             const SizedBox(height: 24),
-            // Import button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.upload_file_rounded),
-                label: const Text('اختر ملف Excel (.xlsx)',
-                    style: TextStyle(fontSize: 15)),
+                label: const Text('اختر ملف Excel (.xlsx)', style: TextStyle(fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.inventoryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _importFromExcel();
-                },
+                onPressed: onImport,
               ),
             ),
             const SizedBox(height: 12),
-            // Help button
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                icon: const Icon(Icons.help_outline_rounded,
-                    color: AppTheme.inventoryColor),
-                label: const Text('عرض دليل التنسيق',
-                    style: TextStyle(color: AppTheme.inventoryColor)),
+                icon: const Icon(Icons.help_outline_rounded, color: AppTheme.inventoryColor),
+                label: const Text('عرض دليل التنسيق', style: TextStyle(color: AppTheme.inventoryColor)),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   side: const BorderSide(color: AppTheme.inventoryColor),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showImportHelp();
-                },
+                onPressed: onHelp,
               ),
             ),
-            const SizedBox(height: 8),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── شاشة أخطاء الاستيراد الأصيلة ─────────────────────────────────────────────
+class _ImportErrorsScreen extends StatelessWidget {
+  final List<String> errors;
+  const _ImportErrorsScreen({required this.errors});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: AppTheme.warningColor,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('تحذيرات الاستيراد', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: errors.length,
+        itemBuilder: (_, i) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.warningColor.withValues(alpha: 0.3)),
+            ),
+            child: Text('• ${errors[i]}', style: const TextStyle(fontSize: 13)),
+          ),
+        ),
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.inventoryColor,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: const Text('حسناً', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+        ),
+      ),
+    );
+  }
+}
+
+// ── شاشة دليل الاستيراد الأصيلة ──────────────────────────────────────────────
+class _ImportHelpScreen extends StatelessWidget {
+  final VoidCallback onExport;
+  const _ImportHelpScreen({required this.onExport});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: AppTheme.inventoryColor,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('دليل الاستيراد', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('تنسيق ملف Excel (.xlsx):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 10),
+            const Text(
+              'الصف الأول: عنوان التقرير (تلقائي)\nالصف الثاني: رؤوس الأعمدة\nالصف الثالث فصاعداً: البيانات',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            const _ColRow(num: '1', name: 'اسم المادة', required: true),
+            const _ColRow(num: '2', name: 'الفئة', required: false),
+            const _ColRow(num: '3', name: 'الكمية', required: true),
+            const _ColRow(num: '4', name: 'الوحدة (قطعة/كغ/...)', required: false),
+            const _ColRow(num: '5', name: 'سعر الوحدة (IQD)', required: true),
+            const _ColRow(num: '6', name: 'الحد الأدنى للمخزون', required: false),
+            const _ColRow(num: '7', name: 'القيمة الإجمالية', required: false),
+            const _ColRow(num: '8', name: 'الوصف', required: false),
+            const SizedBox(height: 20),
+            const Text(
+              '💡 نصيحة: صدّر الملف أولاً للحصول على التنسيق الصحيح، ثم عدّله وأعد استيراده.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textGrey, fontStyle: FontStyle.italic),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ElevatedButton.icon(
+          onPressed: onExport,
+          icon: const Icon(Icons.download_rounded, size: 18),
+          label: const Text('تصدير قالب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.inventoryColor,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         ),
       ),
     );
@@ -1057,215 +1255,800 @@ PopupMenuItem<_InvSort> _invSortItem(_InvSort value, IconData icon, String label
   );
 }
 
-// ── Inventory Dialog ──────────────────────────────────────────────────────────
-class _InventoryDialog extends StatefulWidget {
-  final InventoryItem? existing;
-  final Function(InventoryItem) onSave;
-  const _InventoryDialog({this.existing, required this.onSave});
+// ── Tabular Inventory Screen (Add/Edit) ──────────────────────────────────────
+/// يمثّل صف واحد من البيانات أثناء التحرير
+class _RowData {
+  final TextEditingController name;      // اسم المادة
+  final TextEditingController supplier;  // اسم المجهّز (يُحفظ في category)
+  final TextEditingController unit;      // الوحدة
+  final TextEditingController price;     // سعر المفرد
+  final TextEditingController notes;     // الملاحظات
+  final TextEditingController qty;       // الكمية (مخفية عند الإضافة، ظاهرة عند التعديل)
+  final TextEditingController minStock;
+  final String id;
+  final bool isEdit;                     // هل هذا تعديل لمادة موجودة؟
 
-  @override
-  State<_InventoryDialog> createState() => _InventoryDialogState();
+  _RowData({
+    String? existingId,
+    String nameVal     = '',
+    String supplierVal = '',
+    String unitVal     = 'pcs',
+    String priceVal    = '',
+    String notesVal    = '',
+    String qtyVal      = '0',
+    String minStockVal = '5',
+    this.isEdit        = false,
+  })  : id       = existingId ?? const Uuid().v4(),
+        name     = TextEditingController(text: nameVal),
+        supplier = TextEditingController(text: supplierVal),
+        unit     = TextEditingController(text: unitVal),
+        price    = TextEditingController(text: priceVal),
+        notes    = TextEditingController(text: notesVal),
+        qty      = TextEditingController(text: qtyVal),
+        minStock = TextEditingController(text: minStockVal);
+
+  void dispose() {
+    name.dispose();
+    supplier.dispose();
+    unit.dispose();
+    price.dispose();
+    notes.dispose();
+    qty.dispose();
+    minStock.dispose();
+  }
+
+  bool get isEmpty =>
+      name.text.trim().isEmpty && price.text.trim().isEmpty;
+
+  InventoryItem toItem() => InventoryItem(
+        id:          id,
+        itemName:    name.text.trim(),
+        category:    supplier.text.trim(),
+        // الكمية مخفية في شاشة إضافة المواد:
+        // — إضافة جديدة: دائماً 0
+        // — تعديل: تحافظ على القيمة الحالية المحفوظة (لا تُعدَّل من هنا)
+        quantity:    isEdit
+            ? (double.tryParse(qty.text.trim()) ?? 0)
+            : 0,
+        unitPrice:   double.tryParse(price.text.trim()) ?? 0,
+        minStock:    double.tryParse(minStock.text.trim()) ?? 5,
+        unit:        unit.text.trim().isEmpty ? 'pcs' : unit.text.trim(),
+        description: notes.text.trim(),
+        lastUpdated: DateTime.now(),
+      );
 }
 
-class _InventoryDialogState extends State<_InventoryDialog> {
+class _TabularInventoryScreen extends StatefulWidget {
+  final InventoryItem? existingItem;
+  final Future<void> Function(InventoryItem) onSave;
+  final Future<void> Function(List<InventoryItem>)? onSaveBatch;
+  final VoidCallback onClose;
+
+  const _TabularInventoryScreen({
+    required this.existingItem,
+    required this.onSave,
+    required this.onClose,
+    this.onSaveBatch,
+  });
+
+  @override
+  State<_TabularInventoryScreen> createState() =>
+      _TabularInventoryScreenState();
+}
+
+class _TabularInventoryScreenState extends State<_TabularInventoryScreen> {
+  final List<_RowData> _rows = [];
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _nameCtrl;
-  late TextEditingController _categoryCtrl;
-  late TextEditingController _qtyCtrl;
-  late TextEditingController _priceCtrl;
-  late TextEditingController _minStockCtrl;
-  late TextEditingController _unitCtrl;
-  late TextEditingController _descCtrl;
+  bool _isSaving = false;
+  final ScrollController _vScroll = ScrollController();
+
+  // ارتفاع ثابت للأعمدة (محتفظ للاستخدام المستقبلي)
+  // ignore: unused_field
+  static const double _colName   = 180;
+  // ignore: unused_field
+  static const double _colCat    = 130;
+  // ignore: unused_field
+  static const double _colQty    = 80;
+  // ignore: unused_field
+  static const double _colUnit   = 80;
+  // ignore: unused_field
+  static const double _colPrice  = 110;
+  // ignore: unused_field
+  static const double _colMin    = 90;
+  // ignore: unused_field
+  static const double _colDesc   = 160;
+  // ignore: unused_field
+  static const double _colAct    = 48;
+  // ignore: unused_field
+  static const double _rowHeight = 52;
 
   @override
   void initState() {
     super.initState();
-    final e = widget.existing;
-    _nameCtrl = TextEditingController(text: e?.itemName ?? '');
-    _categoryCtrl = TextEditingController(text: e?.category ?? '');
-    _qtyCtrl = TextEditingController(text: e?.quantity.toString() ?? '');
-    _priceCtrl = TextEditingController(text: e?.unitPrice.toString() ?? '');
-    _minStockCtrl =
-        TextEditingController(text: e?.minStock.toString() ?? '5');
-    _unitCtrl = TextEditingController(text: e?.unit ?? 'pcs');
-    _descCtrl = TextEditingController(text: e?.description ?? '');
+    if (widget.existingItem != null) {
+      final e = widget.existingItem!;
+      _rows.add(_RowData(
+        existingId:   e.id,
+        nameVal:      e.itemName,
+        supplierVal:  e.category,
+        unitVal:      e.unit,
+        priceVal:     e.unitPrice % 1 == 0
+            ? e.unitPrice.toInt().toString()
+            : e.unitPrice.toString(),
+        notesVal:     e.description,
+        // الكمية الحالية تظهر عند التعديل
+        qtyVal:       e.quantity % 1 == 0
+            ? e.quantity.toInt().toString()
+            : e.quantity.toString(),
+        minStockVal:  e.minStock % 1 == 0
+            ? e.minStock.toInt().toString()
+            : e.minStock.toString(),
+        isEdit:       true,          // ← هذا تعديل
+      ));
+    } else {
+      _addEmptyRow();
+    }
+  }
+
+  void _addEmptyRow() {
+    setState(() => _rows.add(_RowData()));
+    // انتقل لأسفل بعد إضافة صف
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_vScroll.hasClients) {
+        _vScroll.animateTo(
+          _vScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _removeRow(int index) {
+    if (_rows.length == 1 && widget.existingItem == null) {
+      setState(() {
+        _rows[0].name.clear();
+        _rows[0].supplier.clear();
+        _rows[0].unit.text = 'pcs';
+        _rows[0].price.clear();
+        _rows[0].notes.clear();
+      });
+      return;
+    }
+    setState(() {
+      _rows[index].dispose();
+      _rows.removeAt(index);
+    });
+  }
+
+  Future<void> _saveAll() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    // تحقق من وجود صف واحد على الأقل له بيانات
+    final validRows = _rows.where((r) => !r.isEmpty).toList();
+    if (validRows.isEmpty) {
+      _showSnack('يرجى إدخال بيانات مادة واحدة على الأقل', isError: true);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      if (widget.existingItem != null) {
+        await widget.onSave(_rows.first.toItem());
+        if (mounted) {
+          _showSnack('✅ تم حفظ التعديل بنجاح');
+          widget.onClose();
+        }
+      } else if (widget.onSaveBatch != null && validRows.length > 1) {
+        await widget.onSaveBatch!(validRows.map((r) => r.toItem()).toList());
+        if (mounted) {
+          _showSnack('✅ تم إضافة ${validRows.length} مواد بنجاح');
+          widget.onClose();
+        }
+      } else {
+        await widget.onSave(validRows.first.toItem());
+        if (mounted) {
+          _showSnack('✅ تم الإضافة بنجاح');
+          widget.onClose();
+        }
+      }
+    } catch (e) {
+      if (mounted) _showSnack('خطأ في الحفظ: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? AppTheme.errorColor : AppTheme.salesColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _categoryCtrl.dispose();
-    _qtyCtrl.dispose();
-    _priceCtrl.dispose();
-    _minStockCtrl.dispose();
-    _unitCtrl.dispose();
-    _descCtrl.dispose();
+    for (final r in _rows) {
+      r.dispose();
+    }
+    _vScroll.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.existing != null;
-    final mq      = MediaQuery.of(context);
-    final dialogW = mq.size.width  * 0.96;
-    final dialogH = mq.size.height * 0.94;
-    return Dialog(
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding: EdgeInsets.zero,
-      child: SizedBox(
-        width:  dialogW,
-        height: dialogH,
-        child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+    final isEdit = widget.existingItem != null;
+
+    return Material(
+      color: AppTheme.background,
+      borderRadius: BorderRadius.circular(20),
+      child: Column(
+        children: [
+          // ── Header bar ──────────────────────────────────────────────
+          Container(
+            decoration: const BoxDecoration(
+              color: AppTheme.inventoryColor,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppTheme.inventoryColor
-                            .withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                          isEdit
-                              ? Icons.edit_rounded
-                              : Icons.add_box_rounded,
-                          color: AppTheme.inventoryColor),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(isEdit ? 'تعديل مادة' : 'مادة جديدة',
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    isEdit ? Icons.edit_rounded : Icons.table_rows_rounded,
+                    color: Colors.white, size: 18,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        isEdit ? 'تعديل المادة' : 'إضافة مواد للمخزن',
                         style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                _buildField(_nameCtrl, 'اسم المادة',
-                    Icons.inventory_2_outlined,
-                    required: true),
-                const SizedBox(height: 12),
-                _buildField(
-                    _categoryCtrl, 'التصنيف', Icons.category_outlined,
-                    required: true),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                        child: _buildField(
-                            _qtyCtrl, 'الكمية', Icons.numbers_rounded,
-                            isNumber: true, required: true)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: _buildField(
-                            _unitCtrl, 'الوحدة', Icons.straighten_rounded,
-                            required: true)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                        child: _buildField(_priceCtrl, 'سعر الوحدة',
-                            Icons.attach_money_rounded,
-                            isNumber: true, required: true)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: _buildField(_minStockCtrl, 'الحد الأدنى للمخزون',
-                            Icons.warning_amber_outlined,
-                            isNumber: true, required: true)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildField(_descCtrl,
-                    'الوصف (اختياري)', Icons.description_outlined),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                        child: OutlinedButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('إلغاء',
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)))),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.inventoryColor),
-                        onPressed: () {
-                          if (!_formKey.currentState!.validate()) return;
-                          widget.onSave(InventoryItem(
-                            id: widget.existing?.id ??
-                                const Uuid().v4(),
-                            itemName: _nameCtrl.text.trim(),
-                            category: _categoryCtrl.text.trim(),
-                            quantity:
-                                double.tryParse(_qtyCtrl.text) ?? 0,
-                            unitPrice:
-                                double.tryParse(_priceCtrl.text) ?? 0,
-                            minStock:
-                                double.tryParse(_minStockCtrl.text) ?? 5,
-                            unit: _unitCtrl.text.trim(),
-                            description: _descCtrl.text.trim(),
-                            lastUpdated: DateTime.now(),
-                          ));
-                          Navigator.pop(context);
-                        },
-                        child: Text(
-                            isEdit ? 'حفظ التعديل' : 'حفظ المادة',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          color: Colors.white, fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                  ],
+                      if (!isEdit)
+                        Text(
+                          '${_rows.length} صف',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.80),
+                            fontSize: 14,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // أيقونة إضافة صف
+                if (!isEdit) ...[
+                  _headerIcon(
+                    icon: Icons.add_rounded,
+                    tooltip: 'إضافة صف جديد',
+                    onTap: _isSaving ? null : _addEmptyRow,
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                // أيقونة حفظ
+                _headerIcon(
+                  icon: _isSaving
+                      ? Icons.hourglass_top_rounded
+                      : Icons.save_rounded,
+                  tooltip: isEdit ? 'حفظ التعديل' : 'حفظ الكل',
+                  onTap: _isSaving ? null : _saveAll,
+                  isLoading: _isSaving,
+                ),
+                const SizedBox(width: 6),
+                // أيقونة إغلاق
+                _headerIcon(
+                  icon: Icons.close_rounded,
+                  tooltip: 'إغلاق',
+                  onTap: widget.onClose,
                 ),
               ],
             ),
           ),
-        ),
+          // ── Table ────────────────────────────────────────────────────
+          Expanded(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  _buildHeader(),
+                  Expanded(
+                    child: Scrollbar(
+                      controller: _vScroll,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _vScroll,
+                        padding: const EdgeInsets.only(bottom: 8),
+                        itemCount: _rows.length,
+                        itemBuilder: (ctx, i) => _buildRow(i),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // ── Bottom icon bar ─────────────────────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(20),
+                bottomRight: Radius.circular(20),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 6,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                if (!isEdit) ...[
+                  _bottomIcon(
+                    icon: Icons.add_circle_outline_rounded,
+                    label: 'صف جديد',
+                    color: AppTheme.inventoryColor,
+                    onTap: _isSaving ? null : _addEmptyRow,
+                  ),
+                  const Spacer(),
+                ],
+                _bottomIcon(
+                  icon: Icons.cancel_outlined,
+                  label: 'إلغاء',
+                  color: AppTheme.textGrey,
+                  onTap: widget.onClose,
+                ),
+                const SizedBox(width: 16),
+                _bottomIcon(
+                  icon: _isSaving
+                      ? Icons.hourglass_top_rounded
+                      : Icons.save_alt_rounded,
+                  label: isEdit ? 'حفظ' : 'حفظ الكل',
+                  color: AppTheme.salesColor,
+                  onTap: _isSaving ? null : _saveAll,
+                  filled: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerIcon({
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onTap,
+    bool isLoading = false,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: isLoading
+              ? const SizedBox(
+                  width: 18, height: 18,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+              : Icon(icon, color: Colors.white, size: 19),
         ),
       ),
     );
   }
 
-  Widget _buildField(
-    TextEditingController ctrl,
-    String label,
-    IconData icon, {
-    bool required = false,
+  Widget _bottomIcon({
+    required IconData icon,
+    required String label,
+    required Color color,
+    VoidCallback? onTap,
+    bool filled = false,
+  }) {
+    final effectiveColor =
+        onTap == null ? color.withValues(alpha: 0.35) : color;
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: filled ? color.withValues(alpha: 0.10) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border:
+                filled ? Border.all(color: color.withValues(alpha: 0.35)) : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: effectiveColor, size: 22),
+              const SizedBox(height: 2),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: effectiveColor,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── رأس الجدول (ويب فقط — سطرين كالبطاقة) ───────────────────────────────
+  Widget _buildHeader() {
+    // لا يوجد رأس على أي منصة — كل بطاقة تحمل عناوينها بداخلها
+    return const SizedBox.shrink();
+  }
+
+  // ── صف بيانات ────────────────────────────────────────────────────────────
+  Widget _buildRow(int index) {
+    final row    = _rows[index];
+    final isEdit = widget.existingItem != null;
+
+    // ── موبايل: بطاقة عمودية ────────────────────────────────────────────────
+    if (!kIsWeb) {
+      return _buildMobileCard(index, row, isEdit);
+    }
+
+    // ── ويب/سطح المكتب: نفس تخطيط بطاقة الموبايل (3 سطور) ────────────────────
+    final isEven = index % 2 == 0;
+    final rowBg  = isEven ? Colors.white : const Color(0xFFF0F7FF);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: rowBg,
+        border: Border(
+          bottom: BorderSide(
+              color: AppTheme.divider.withValues(alpha: 0.5), width: 1),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── السطر 1: اسم المادة — عرض كامل + زر الحذف ──────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _labeledField(
+                  label: 'اسم المادة *',
+                  child: _field(
+                    ctrl: row.name,
+                    hint: 'اسم المادة',
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'مطلوب' : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // زر الحذف
+              Tooltip(
+                message: 'حذف الصف',
+                child: InkWell(
+                  onTap: () => _removeRow(index),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    width: 32,
+                    height: 48,
+                    margin: const EdgeInsets.only(top: 20),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.delete_outline_rounded,
+                        color: AppTheme.errorColor, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // ── السطر 2: الوحدة | سعر المفرد | المجهّز ─────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // الوحدة — flex 2
+              Expanded(
+                flex: 2,
+                child: _labeledField(
+                  label: 'الوحدة',
+                  child: _field(
+                      ctrl: row.unit,
+                      hint: 'pcs',
+                      align: TextAlign.center),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // سعر المفرد — flex 4
+              Expanded(
+                flex: 4,
+                child: _labeledField(
+                  label: 'سعر المفرد *',
+                  child: _field(
+                    ctrl: row.price,
+                    hint: '0.00',
+                    isNumber: true,
+                    align: TextAlign.end,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'مطلوب';
+                      if (double.tryParse(v.trim()) == null) return 'رقم';
+                      return null;
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // المجهّز — flex 4
+              Expanded(
+                flex: 4,
+                child: _labeledField(
+                  label: 'المجهّز',
+                  child: _field(ctrl: row.supplier, hint: 'اسم المجهّز'),
+                ),
+              ),
+              const SizedBox(width: 38), // محاذاة مع زر الحذف في السطر الأول
+            ],
+          ),
+          const SizedBox(height: 8),
+          // ── السطر 3: الملاحظات — عرض كامل ──────────────────────────
+          Row(
+            children: [
+              Expanded(
+                child: _labeledField(
+                  label: 'ملاحظات',
+                  child: _field(
+                    ctrl: row.notes,
+                    hint: 'ملاحظات...',
+                    fullWidth: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 38), // محاذاة مع زر الحذف في السطر الأول
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── بطاقة الموبايل (تخطيط عمودي) ─────────────────────────────────────────
+  Widget _buildMobileCard(int index, _RowData row, bool isEdit) {
+    final isEven = index % 2 == 0;
+    final cardBg = isEven ? Colors.white : const Color(0xFFF4F8FF);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: AppTheme.inventoryColor.withValues(alpha: 0.18), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── رقم البطاقة + زر الحذف (إضافة متعددة فقط) ──────────────
+          if (!isEdit)
+            Row(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppTheme.inventoryColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'مادة ${index + 1}',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.inventoryColor),
+                  ),
+                ),
+                const Spacer(),
+                InkWell(
+                  onTap: () => _removeRow(index),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor.withValues(alpha: 0.09),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.delete_outline_rounded,
+                        color: AppTheme.errorColor, size: 16),
+                  ),
+                ),
+              ],
+            ),
+          if (!isEdit) const SizedBox(height: 8),
+
+          // ── السطر 1: اسم المادة — عرض كامل ──────────────────────────
+          _labeledField(
+            label: 'اسم المادة *',
+            child: _field(
+              ctrl: row.name,
+              hint: 'اسم المادة',
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'مطلوب' : null,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // ── السطر 2: الوحدة | سعر المفرد | المجهّز ─────────────────
+          // الكمية مخفية دائماً — تُحفظ تلقائياً
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // الوحدة — flex 2
+              Expanded(
+                flex: 2,
+                child: _labeledField(
+                  label: 'الوحدة',
+                  child: _field(
+                      ctrl: row.unit,
+                      hint: 'pcs',
+                      align: TextAlign.center),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // سعر المفرد — flex 4
+              Expanded(
+                flex: 4,
+                child: _labeledField(
+                  label: 'سعر المفرد *',
+                  child: _field(
+                    ctrl: row.price,
+                    hint: '0.00',
+                    isNumber: true,
+                    align: TextAlign.end,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'مطلوب';
+                      if (double.tryParse(v.trim()) == null) return 'رقم';
+                      return null;
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // المجهّز — flex 4
+              Expanded(
+                flex: 4,
+                child: _labeledField(
+                  label: 'المجهّز',
+                  child: _field(ctrl: row.supplier, hint: 'اسم المجهّز'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // ── السطر 3: الملاحظات — عرض كامل ──────────────────────────
+          _labeledField(
+            label: 'ملاحظات',
+            child: _field(
+              ctrl: row.notes,
+              hint: 'ملاحظات...',
+              fullWidth: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── حقل مع تسمية فوقه ────────────────────────────────────────────────────
+  Widget _labeledField({required String label, required Widget child}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 16,                          // ← عنوان 16 عريض
+            fontWeight: FontWeight.bold,
+            color: AppTheme.inventoryColor.withValues(alpha: 0.90),
+          ),
+        ),
+        const SizedBox(height: 4),
+        child,
+      ],
+    );
+  }
+
+  // ── حقل نص مشترك ─────────────────────────────────────────────────────────
+  Widget _field({
+    required TextEditingController ctrl,
+    required String hint,
     bool isNumber = false,
+    TextAlign align = TextAlign.start,
+    String? Function(String?)? validator,
+    bool fullWidth = false,
   }) {
     return TextFormField(
       controller: ctrl,
       keyboardType: isNumber
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
+      textAlign: align,
+      style: const TextStyle(
+        fontSize: 14,                              // ← نص الحقل 14 عريض
+        fontWeight: FontWeight.bold,
+      ),
+      validator: validator,
       decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        prefixIcon: Icon(icon, color: AppTheme.inventoryColor, size: 22),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFDDE1EA))),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppTheme.inventoryColor, width: 2)),
+        hintText: hint,
+        hintStyle: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: AppTheme.textGrey,
+        ),
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
         filled: true,
         fillColor: Colors.white,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFFDDE1EA)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFFDDE1EA)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              const BorderSide(color: AppTheme.inventoryColor, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppTheme.errorColor),
+        ),
+        errorStyle: const TextStyle(fontSize: 11, height: 0.9),
       ),
-      validator: required
-          ? (v) =>
-              (v == null || v.isEmpty) ? '$label is required' : null
-          : null,
     );
   }
 }

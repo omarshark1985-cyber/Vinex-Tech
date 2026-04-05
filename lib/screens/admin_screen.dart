@@ -2,62 +2,63 @@ import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
+import 'login_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin Management Screen — visible only when logged in as 'admin'
 // ─────────────────────────────────────────────────────────────────────────────
 class AdminScreen extends StatefulWidget {
-  const AdminScreen({super.key});
+  final AppUser currentUser;
+  const AdminScreen({super.key, required this.currentUser});
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
 }
 
 class _AdminScreenState extends State<AdminScreen> {
-  List<AppUser> _users = [];
-  bool _loading = true;
+  // ── يستخدم الشاشة Stream مباشرة من Firebase كبقية الشاشات ──────────────
 
-  @override
-  void initState() {
-    super.initState();
-    _loadUsers();
-  }
-
-  Future<void> _loadUsers() async {
-    setState(() => _loading = true);
-    final users = await DatabaseService.getAllUsers();
-    setState(() {
-      _users = users;
-      _loading = false;
-    });
-  }
-
-  // ── Open add/edit dialog ──────────────────────────────────────────────────
+  // ── Open add/edit — native screen ────────────────────────────────────────
   void _openUserDialog({AppUser? existing}) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _UserDialog(
-        existing: existing,
-        onSaved: (user) async {
-          await DatabaseService.saveUser(user);
-          await _loadUsers();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(existing == null
-                  ? '✅ تم إنشاء المستخدم "${user.username}" بنجاح'
-                  : '✅ تم تحديث المستخدم "${user.username}" بنجاح'),
-              backgroundColor: Colors.green,
-              behavior: SnackBarBehavior.floating,
-            ));
-          }
-        },
-        isNew: existing == null,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _UserDialog(
+          existing: existing,
+          isNew: existing == null,
+          onSaved: (user, passwordChanged) async {
+            await DatabaseService.saveUser(user);
+            if (mounted && passwordChanged &&
+                user.username == widget.currentUser.username) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('🔐 تم تغيير كلمة المرور — يرجى إعادة تسجيل الدخول'),
+                backgroundColor: Colors.orange,
+                behavior: SnackBarBehavior.floating,
+                duration: Duration(seconds: 2),
+              ));
+              await Future.delayed(const Duration(seconds: 2));
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              }
+            } else if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(existing == null
+                    ? '✅ تم إنشاء المستخدم "${user.username}" بنجاح'
+                    : '✅ تم تحديث المستخدم "${user.username}" بنجاح'),
+                backgroundColor: Colors.green,
+                behavior: SnackBarBehavior.floating,
+              ));
+            }
+          },
+        ),
       ),
     );
   }
 
-  // ── Confirm delete ────────────────────────────────────────────────────────
+  // ── Confirm delete — popup dialog ───────────────────────────────────────
   void _confirmDelete(AppUser user) {
     if (user.username == 'admin') {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -68,70 +69,18 @@ class _AdminScreenState extends State<AdminScreen> {
     }
     showDialog(
       context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.person_remove_rounded, color: Colors.red, size: 22),
-              ),
-              const SizedBox(width: 10),
-              const Text('حذف المستخدم', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.red)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Divider(),
-              const SizedBox(height: 8),
-              Text('هل أنت متأكد من حذف المستخدم؟', style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              _InfoChip(icon: Icons.person_outline, label: user.username),
-              if (user.displayName.isNotEmpty)
-                _InfoChip(icon: Icons.badge_outlined, label: user.displayName),
-              const SizedBox(height: 12),
-              const Text('لا يمكن التراجع عن هذا الإجراء.', style: TextStyle(color: Colors.grey, fontSize: 12)),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      child: const Text('لا، تراجع'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        Navigator.of(ctx).pop();
-                        await DatabaseService.deleteUser(user.username);
-                        await _loadUsers();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text('🗑 تم حذف المستخدم "${user.username}"'),
-                            backgroundColor: Colors.red,
-                          ));
-                        }
-                      },
-                      icon: const Icon(Icons.delete_forever_rounded, size: 18),
-                      label: const Text('نعم، احذف'),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+      barrierDismissible: false,
+      builder: (_) => _DeleteUserDialog(
+          user: user,
+          onConfirmed: () async {
+            await DatabaseService.deleteUser(user.username);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text('🗑 تم حذف المستخدم "${user.username}"'),
+                backgroundColor: Colors.red,
+              ));
+            }
+          },
       ),
     );
   }
@@ -153,25 +102,75 @@ class _AdminScreenState extends State<AdminScreen> {
             ],
           ),
           actions: [
+            // زر تحديث يدوي — يجبر Firebase على إعادة التحميل فوراً
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
               tooltip: 'تحديث',
-              onPressed: _loadUsers,
+              onPressed: () => DatabaseService.refreshData(),
             ),
-            const SizedBox(width: 4),
+            // مؤشر حالة الاتصال بـ Firebase
+            StreamBuilder<bool>(
+              stream: DatabaseService.connectionStream,
+              builder: (_, snap) {
+                final online = snap.data ?? DatabaseService.isFirebaseConnected;
+                return Padding(
+                  padding: const EdgeInsets.only(left: 8, right: 4),
+                  child: Tooltip(
+                    message: online ? 'متصل بـ Firebase' : 'غير متصل — وضع محلي',
+                    child: Icon(
+                      online ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
+                      size: 18,
+                      color: online ? Colors.greenAccent : Colors.red[200],
+                    ),
+                  ),
+                );
+              },
+            ),
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: () => _openUserDialog(),
           backgroundColor: AppTheme.primaryBlue,
           icon: const Icon(Icons.person_add_rounded, color: Colors.white),
-          label: const Text('مستخدم جديد', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          label: const Text('مستخدم جديد',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _users.isEmpty
-                ? _buildEmpty()
-                : _buildList(),
+        // ── StreamBuilder — يتحدث تلقائياً عند أي تغيير في Firebase ────────
+        body: StreamBuilder<List<AppUser>>(
+          stream: DatabaseService.usersStream,
+          builder: (context, snapshot) {
+            // جارٍ التحميل الأول
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                !snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            // خطأ في الـ Stream
+            if (snapshot.hasError) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                    const SizedBox(height: 12),
+                    Text('خطأ في تحميل البيانات: ${snapshot.error}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red)),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: () => DatabaseService.refreshData(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('إعادة المحاولة'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            final users = snapshot.data ?? [];
+            if (users.isEmpty) return _buildEmpty();
+            return _buildList(users);
+          },
+        ),
       ),
     );
   }
@@ -183,7 +182,8 @@ class _AdminScreenState extends State<AdminScreen> {
         children: [
           Icon(Icons.group_off_rounded, size: 72, color: Colors.grey[300]),
           const SizedBox(height: 16),
-          const Text('لا يوجد مستخدمون', style: TextStyle(fontSize: 18, color: Colors.grey, fontWeight: FontWeight.w600)),
+          const Text('لا يوجد مستخدمون',
+              style: TextStyle(fontSize: 18, color: Colors.grey, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           const Text('اضغط + لإضافة مستخدم جديد', style: TextStyle(color: Colors.grey)),
         ],
@@ -191,7 +191,7 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _buildList() {
+  Widget _buildList(List<AppUser> users) {
     return Column(
       children: [
         // Header banner
@@ -204,8 +204,24 @@ class _AdminScreenState extends State<AdminScreen> {
               const Icon(Icons.people_rounded, color: Colors.white70, size: 18),
               const SizedBox(width: 8),
               Text(
-                '${_users.length} مستخدم مسجل في النظام',
+                '${users.length} مستخدم مسجل في النظام',
                 style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const Spacer(),
+              // مؤشر زمن آخر تحديث
+              StreamBuilder<bool>(
+                stream: DatabaseService.connectionStream,
+                builder: (_, snap) {
+                  final online = snap.data ?? DatabaseService.isFirebaseConnected;
+                  return Text(
+                    online ? '● مباشر' : '○ محلي',
+                    style: TextStyle(
+                      color: online ? Colors.greenAccent : Colors.orange[200],
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -213,15 +229,15 @@ class _AdminScreenState extends State<AdminScreen> {
         // Users list
         Expanded(
           child: RefreshIndicator(
-            onRefresh: _loadUsers,
+            onRefresh: () => DatabaseService.refreshData(),
             child: ListView.separated(
               padding: const EdgeInsets.all(16),
-              itemCount: _users.length,
+              itemCount: users.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (_, i) => _UserCard(
-                user: _users[i],
-                onEdit: () => _openUserDialog(existing: _users[i]),
-                onDelete: () => _confirmDelete(_users[i]),
+                user: users[i],
+                onEdit: () => _openUserDialog(existing: users[i]),
+                onDelete: () => _confirmDelete(users[i]),
               ),
             ),
           ),
@@ -459,7 +475,8 @@ class _InfoChip extends StatelessWidget {
 class _UserDialog extends StatefulWidget {
   final AppUser? existing;
   final bool isNew;
-  final Future<void> Function(AppUser) onSaved;
+  /// Called with (updatedUser, passwordWasChanged)
+  final Future<void> Function(AppUser, bool) onSaved;
 
   const _UserDialog({this.existing, required this.isNew, required this.onSaved});
 
@@ -545,14 +562,22 @@ class _UserDialogState extends State<_UserDialog> {
 
     setState(() => _saving = true);
 
-    final password = _passwordCtrl.text.isNotEmpty
-        ? _passwordCtrl.text
+    // هل تغيرت كلمة المرور فعلاً؟
+    final newPassword = _passwordCtrl.text.trim();
+    final passwordChanged = newPassword.isNotEmpty;
+
+    // إذا كانت كلمة المرور فارغة عند التعديل → احتفظ بالقديمة
+    final password = passwordChanged
+        ? newPassword
         : (widget.existing?.password ?? '');
+
+    // احتفظ بالـ role الأصلي عند التعديل (لا تُغيّر admin إلى user)
+    final role = widget.existing?.role ?? 'user';
 
     final user = AppUser(
       username: _usernameCtrl.text.trim(),
       password: password,
-      role: 'user',
+      role: role,
       displayName: _displayNameCtrl.text.trim(),
       canViewSales: _canViewSales,
       canViewPurchases: _canViewPurchases,
@@ -568,7 +593,7 @@ class _UserDialogState extends State<_UserDialog> {
       canExportReports: _canExportReports,
     );
 
-    await widget.onSaved(user);
+    await widget.onSaved(user, !widget.isNew && passwordChanged);
     setState(() => _saving = false);
     if (mounted) Navigator.of(context).pop();
   }
@@ -578,51 +603,33 @@ class _UserDialogState extends State<_UserDialog> {
     final isAdminEdit = widget.existing?.username == 'admin';
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 700),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      child: Scaffold(
+        backgroundColor: AppTheme.background,
+        appBar: AppBar(
+          backgroundColor: AppTheme.primaryBlue,
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: Row(
             children: [
-              // ── Dialog Title Bar ──────────────────────────────────────
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryBlue,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.isNew ? Icons.person_add_rounded : Icons.edit_rounded,
-                      color: Colors.white, size: 22,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.isNew ? 'إضافة مستخدم جديد' : 'تعديل المستخدم',
-                        style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
-                    ),
-                  ],
-                ),
+              Icon(widget.isNew ? Icons.person_add_rounded : Icons.edit_rounded, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                widget.isNew ? 'إضافة مستخدم جديد' : 'تعديل المستخدم',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-
-              // ── Scrollable form body ──────────────────────────────────
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+            ],
+          ),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                         // Basic info section
                         _SectionHeader(icon: Icons.person_outline_rounded, title: 'معلومات المستخدم'),
                         const SizedBox(height: 12),
@@ -892,12 +899,8 @@ class _UserDialogState extends State<_UserDialog> {
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -910,6 +913,94 @@ class _UserDialogState extends State<_UserDialog> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete User Screen (native)
+// ─────────────────────────────────────────────────────────────────────────────
+class _DeleteUserDialog extends StatelessWidget {
+  final AppUser user;
+  final Future<void> Function() onConfirmed;
+  const _DeleteUserDialog({required this.user, required this.onConfirmed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: const BoxDecoration(
+            color: Colors.red,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.person_remove_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text('حذف المستخدم', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+            ],
+          ),
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('هل أنت متأكد من حذف المستخدم؟',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+            const SizedBox(height: 12),
+            _InfoChip(icon: Icons.person_outline, label: user.username),
+            if (user.displayName.isNotEmpty)
+              _InfoChip(icon: Icons.badge_outlined, label: user.displayName),
+            const SizedBox(height: 12),
+            const Text('لا يمكن التراجع عن هذا الإجراء.',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 8),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('لا، تراجع', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    foregroundColor: AppTheme.textGrey,
+                    side: const BorderSide(color: AppTheme.textGrey),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await onConfirmed();
+                  },
+                  icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                  label: const Text('نعم، احذف', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
