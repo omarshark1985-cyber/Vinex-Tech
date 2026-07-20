@@ -7,12 +7,67 @@ import '../utils/currency_helper.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // InvoicePdfGenerator
-// Pixel-perfect mirror of the Flutter _A4Page preview widget.
-// Every color, dimension, font-size, bold flag, column width, and IQD position
-// matches the on-screen preview exactly.
+//
+// SINGLE SOURCE OF TRUTH for all layout values.
+// Every constant below is derived from the Flutter preview widget constants
+// (invoice_detail_screen.dart) via:
+//
+//   pdf_pt = flutter_px × (595 / 794)      ← A4 width: 595pt = 794px @ 96dpi
+//
+// This guarantees the PDF output is a pixel-perfect mirror of the on-screen
+// preview — same proportions, same colours, same column widths, same bold.
 // ══════════════════════════════════════════════════════════════════════════════
 class InvoicePdfGenerator {
-  // ── Colors (identical to _pv* constants in invoice_detail_screen.dart) ───
+
+  // ── Conversion factor (A4: 595pt wide / 794px wide) ──────────────────────
+  static const double _s = 595 / 794; // ≈ 0.7494
+
+  // ── Layout constants (all in PDF points, derived from Flutter px × _s) ───
+  // Header / cont-header
+  static const double _hdrPadH     = 32 * _s;  // 24.0 pt
+  static const double _hdrPadV     = 18 * _s;  // 13.5 pt
+  static const double _contHdrPadV = 10 * _s;  //  7.5 pt
+  static const double _logoSize    = 50 * _s;  // 37.5 pt
+
+  // Footer
+  static const double _ftPadH = 32 * _s;  // 24.0 pt
+  static const double _ftPadV = 10 * _s;  //  7.5 pt
+
+  // Body padding
+  static const double _bdPadH   = 32 * _s;  // 24.0 pt
+  static const double _bdPadTop = 20 * _s;  // 15.0 pt
+  static const double _bdPadBot = 20 * _s;  // 15.0 pt
+
+  // Info cards
+  static const double _infoH         = 90 * _s;  // 67.5 pt (card height)
+  static const double _infoGap        = 14 * _s;  // 10.5 pt (gap between cards)
+  static const double _infoTitlePadH  = 11 * _s;  //  8.2 pt
+  static const double _infoTitlePadV  =  7 * _s;  //  5.2 pt
+  static const double _infoBodyPad    = 10 * _s;  //  7.5 pt
+
+  // Items table
+  static const double _tblHdrH  = 36 * _s;   // 27.0 pt  (header row height)
+  static const double _tblRowH  = 37 * _s;   // 27.7 pt  (data row height)
+  static const double _tblPadH  =  8 * _s;   //  6.0 pt  (cell horizontal padding)
+  static const double _col0     = 40 * _s;   // 30.0 pt  (#)
+  static const double _col2     = 55 * _s;   // 41.2 pt  (QTY)
+  static const double _col3     = 125 * _s;  // 93.7 pt  (UNIT PRICE)
+  static const double _col4     = 125 * _s;  // 93.7 pt  (AMOUNT)
+
+  // Totals block
+  static const double _totW        = 280 * _s;  // 209.8 pt
+  static const double _totPadH     = 14  * _s;  //  10.5 pt
+  static const double _totPadV     =  8  * _s;  //   6.0 pt
+  static const double _totBarPadH  = 14  * _s;  //  10.5 pt
+  static const double _totBarPadV  = 11  * _s;  //   8.2 pt
+
+  // Notes
+  static const double _notesPad = 12 * _s;  //  9.0 pt
+
+  // Gaps between sections
+  static const double _sectionGap = 20 * _s;  // 15.0 pt
+
+  // ── Colors (identical hex to _pv* constants in invoice_detail_screen.dart) ─
   static const PdfColor _hdrLeft     = PdfColor.fromInt(0xFF1E3A5F);
   static const PdfColor _hdrRight    = PdfColor.fromInt(0xFF1B5E20);
   static const PdfColor _blue        = PdfColor.fromInt(0xFF2563EB);
@@ -33,27 +88,7 @@ class InvoicePdfGenerator {
   static const PdfColor _orange      = PdfColor.fromInt(0xFFE65100);
   static const PdfColor _brown       = PdfColor.fromInt(0xFF795548);
 
-  // ── A4 layout constants (mirror of invoice_detail_screen.dart _a4* consts) ─
-  // A4 at 72 pt/inch = 595.28 × 841.89 pt  (pdf package uses pt by default)
-  // We use the same logical proportions as the Flutter widget (794 × 1123 px)
-  // by working in the pdf package's pt coordinate system.
-  static const double _bodyPadH     = 32;   // body horizontal padding
-  static const double _bodyPadTop   = 20;   // body top padding (page 1)
-  static const double _bodyPadBot   = 20;   // body bottom padding
-  static const double _infoRowH     = 80;   // info cards height
-  static const double _tableRowH    = 28;   // items table data row height
-  static const double _tableHdrH    = 28;   // items table header row height
-
-  // ── Column widths for items table (matches Flutter widget exactly) ────────
-  // Total content width ≈ 595 − 2×32(hPad) − 2×1(border) = 529 pt
-  // Flutter: Fixed(40) + Flex(1) + Fixed(55) + Fixed(125) + Fixed(125) = 345 + flex
-  // Scale factor ≈ 529/794 ≈ 0.666  →  Fixed(27) + Flex + Fixed(37) + Fixed(83) + Fixed(83)
-  static const double _colW0 = 27;   // #
-  static const double _colW2 = 37;   // QTY
-  static const double _colW3 = 83;   // UNIT PRICE
-  static const double _colW4 = 83;   // AMOUNT
-
-  // ── Public entry point ────────────────────────────────────────────────────
+  // ── Public entry points ───────────────────────────────────────────────────
   static Future<pw.Document> buildDocument(Invoice invoice) async {
     pw.MemoryImage? logo;
     try {
@@ -65,184 +100,156 @@ class InvoicePdfGenerator {
     final dateStr = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
 
     final pdf = pw.Document(compress: true);
-
-    final pageTheme = pw.PageTheme(
-      pageFormat: PdfPageFormat.a4,
-      margin: pw.EdgeInsets.zero,
-      buildBackground: (_) => pw.Container(color: _white),
-    );
-
-    pdf.addPage(
-      pw.MultiPage(
-        pageTheme: pageTheme,
-        // ── HEADER — repeats on every page ───────────────────────────────────
-        header: (ctx) => _buildHeader(logo, invNum, invoice, ctx),
-        // ── FOOTER — repeats on every page ───────────────────────────────────
-        footer: (ctx) => _buildFooter(ctx),
-        // ── BODY ─────────────────────────────────────────────────────────────
-        build: (ctx) => [
-          // Info cards (page 1 only — MultiPage places them before the table)
-          pw.Padding(
-            padding: pw.EdgeInsets.fromLTRB(
-                _bodyPadH, _bodyPadTop, _bodyPadH, 0),
-            child: _buildInfoRow(invoice, invNum, dateStr),
-          ),
-          pw.SizedBox(height: 20),
-          // Items table — auto-splits across pages
-          pw.Padding(
-            padding: pw.EdgeInsets.symmetric(horizontal: _bodyPadH),
-            child: _buildItemsTable(invoice),
-          ),
-          pw.SizedBox(height: 16),
-          // Totals
-          pw.Padding(
-            padding: pw.EdgeInsets.symmetric(horizontal: _bodyPadH),
-            child: _buildTotalsRow(invoice),
-          ),
-          // Notes
-          if (invoice.notes.isNotEmpty) ...[
-            pw.SizedBox(height: 12),
-            pw.Padding(
-              padding: pw.EdgeInsets.symmetric(horizontal: _bodyPadH),
-              child: _buildNotes(invoice.notes),
-            ),
-          ],
-          pw.SizedBox(height: _bodyPadBot),
-        ],
+    pdf.addPage(pw.MultiPage(
+      pageTheme: pw.PageTheme(
+        pageFormat: PdfPageFormat.a4,
+        margin: pw.EdgeInsets.zero,
+        buildBackground: (_) => pw.Container(color: _white),
       ),
-    );
-
+      header: (ctx) => _buildHeader(logo, invNum, invoice, ctx),
+      footer: (ctx) => _buildFooter(ctx),
+      build:  (ctx) => [
+        pw.Padding(
+          padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
+          child: _buildInfoRow(invoice, invNum, dateStr),
+        ),
+        pw.SizedBox(height: _sectionGap),
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+          child: _buildItemsTable(invoice),
+        ),
+        pw.SizedBox(height: 16 * _s),
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+          child: _buildTotalsRow(invoice),
+        ),
+        if (invoice.notes.isNotEmpty) ...[
+          pw.SizedBox(height: 12 * _s),
+          pw.Padding(
+            padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+            child: _buildNotes(invoice.notes),
+          ),
+        ],
+        pw.SizedBox(height: _bdPadBot),
+      ],
+    ));
     return pdf;
   }
 
-  /// Save to bytes (download / share)
-  static Future<List<int>> generate(Invoice invoice) async {
-    final doc = await buildDocument(invoice);
-    return doc.save();
-  }
+  static Future<List<int>> generate(Invoice invoice) async =>
+      (await buildDocument(invoice)).save();
 
   // ══════════════════════════════════════════════════════════════════════════
-  // HEADER  — gradient bar with logo + company + invoice badge
-  // Mirrors _A4Page._buildHeader() and _buildContHeader()
+  // HEADER  (page 1 = full, pages 2+ = mini continuation)
   // ══════════════════════════════════════════════════════════════════════════
-  static pw.Widget _buildHeader(
-      pw.MemoryImage? logo, String invNum, Invoice invoice, pw.Context ctx) {
-    final isFirstPage = ctx.pageNumber == 1;
+  static pw.Widget _buildHeader(pw.MemoryImage? logo, String invNum,
+      Invoice invoice, pw.Context ctx) {
+    final gradient = const pw.BoxDecoration(
+      gradient: pw.LinearGradient(
+        colors: [_hdrLeft, _hdrRight],
+        begin: pw.Alignment.centerLeft,
+        end: pw.Alignment.centerRight,
+      ),
+    );
 
-    if (isFirstPage) {
-      // ── Full header (page 1) ─────────────────────────────────────────────
+    if (ctx.pageNumber == 1) {
+      // ── Full header ──────────────────────────────────────────────────────
       return pw.Container(
         width: double.infinity,
-        padding: const pw.EdgeInsets.symmetric(horizontal: 32, vertical: 18),
-        decoration: const pw.BoxDecoration(
-          gradient: pw.LinearGradient(
-            colors: [_hdrLeft, _hdrRight],
-            begin: pw.Alignment.centerLeft,
-            end: pw.Alignment.centerRight,
-          ),
-        ),
+        padding: pw.EdgeInsets.symmetric(
+            horizontal: _hdrPadH, vertical: _hdrPadV),
+        decoration: gradient,
         child: pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.center,
           children: [
             // Logo box
             pw.Container(
-              width: 50, height: 50,
+              width: _logoSize, height: _logoSize,
               decoration: pw.BoxDecoration(
                 color: const PdfColor(1, 1, 1, 0.15),
-                borderRadius: pw.BorderRadius.circular(9),
+                borderRadius: pw.BorderRadius.circular(9 * _s),
                 border: pw.Border.all(color: const PdfColor(1, 1, 1, 0.3)),
               ),
               child: logo != null
-                  ? pw.ClipRRect(horizontalRadius: 8, verticalRadius: 8,
+                  ? pw.ClipRRect(
+                      horizontalRadius: 8 * _s, verticalRadius: 8 * _s,
                       child: pw.Image(logo, fit: pw.BoxFit.contain))
-                  : pw.Center(
-                      child: pw.Text('VT',
-                          style: pw.TextStyle(color: _white, fontSize: 17,
-                              fontWeight: pw.FontWeight.bold))),
-            ),
-            pw.SizedBox(width: 14),
-            // Company info
-            pw.Expanded(
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text('VINEX TECHNOLOGY',
+                  : pw.Center(child: pw.Text('VT',
                       style: pw.TextStyle(color: _white, fontSize: 17,
-                          fontWeight: pw.FontWeight.bold, letterSpacing: 2)),
-                  pw.SizedBox(height: 4),
-                  pw.Text(
-                      'Baghdad, Yarmouk — Al-Fakhri 2 Building  |  07803662728',
-                      style: pw.TextStyle(
-                          color: const PdfColor(1, 1, 1, 0.8), fontSize: 9)),
-                ],
-              ),
+                          fontWeight: pw.FontWeight.bold))),
             ),
-            // Invoice badge
-            pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.end,
+            pw.SizedBox(width: 14 * _s),
+            // Company name + address
+            pw.Expanded(child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
-                  decoration: pw.BoxDecoration(
-                    color: const PdfColor(1, 1, 1, 0.2),
-                    borderRadius: pw.BorderRadius.circular(4),
-                    border: pw.Border.all(color: const PdfColor(1, 1, 1, 0.4)),
-                  ),
-                  child: pw.Text(
-                      invoice.isQuote ? 'QUOTATION' : 'INVOICE',
-                      style: pw.TextStyle(color: _white, fontSize: 9,
-                          fontWeight: pw.FontWeight.bold, letterSpacing: 2.5)),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Text('#$invNum',
-                    style: pw.TextStyle(color: _white, fontSize: 20,
-                        fontWeight: pw.FontWeight.bold)),
+                pw.Text('VINEX TECHNOLOGY',
+                    style: pw.TextStyle(color: _white, fontSize: 17,
+                        fontWeight: pw.FontWeight.bold, letterSpacing: 2)),
+                pw.SizedBox(height: 4 * _s),
+                pw.Text(
+                    'Baghdad, Yarmouk — Al-Fakhri 2 Building  |  07803662728',
+                    style: pw.TextStyle(
+                        color: const PdfColor(1, 1, 1, 0.8), fontSize: 9)),
               ],
-            ),
+            )),
+            // Invoice badge
+            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
+              pw.Container(
+                padding: pw.EdgeInsets.symmetric(
+                    horizontal: 10 * _s, vertical: 3 * _s),
+                decoration: pw.BoxDecoration(
+                  color: const PdfColor(1, 1, 1, 0.2),
+                  borderRadius: pw.BorderRadius.circular(4 * _s),
+                  border: pw.Border.all(color: const PdfColor(1, 1, 1, 0.4)),
+                ),
+                child: pw.Text(invoice.isQuote ? 'QUOTATION' : 'INVOICE',
+                    style: pw.TextStyle(color: _white, fontSize: 9,
+                        fontWeight: pw.FontWeight.bold, letterSpacing: 2.5)),
+              ),
+              pw.SizedBox(height: 4 * _s),
+              pw.Text('#$invNum',
+                  style: pw.TextStyle(color: _white, fontSize: 20,
+                      fontWeight: pw.FontWeight.bold)),
+            ]),
           ],
         ),
       );
     } else {
-      // ── Continuation mini-header (pages 2+) ──────────────────────────────
+      // ── Mini continuation header ─────────────────────────────────────────
       return pw.Container(
         width: double.infinity,
-        padding: const pw.EdgeInsets.symmetric(horizontal: 32, vertical: 10),
-        decoration: const pw.BoxDecoration(
-          gradient: pw.LinearGradient(
-            colors: [_hdrLeft, _hdrRight],
-            begin: pw.Alignment.centerLeft,
-            end: pw.Alignment.centerRight,
+        padding: pw.EdgeInsets.symmetric(
+            horizontal: _hdrPadH, vertical: _contHdrPadV),
+        decoration: gradient,
+        child: pw.Row(children: [
+          pw.Text('VINEX TECHNOLOGY',
+              style: pw.TextStyle(color: _white, fontSize: 13,
+                  fontWeight: pw.FontWeight.bold, letterSpacing: 1.5)),
+          pw.Spacer(),
+          pw.Text(
+            '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum'
+            '  —  Continued (Page ${ctx.pageNumber} / ${ctx.pagesCount})',
+            style: pw.TextStyle(
+                color: const PdfColor(1, 1, 1, 0.85), fontSize: 9,
+                fontWeight: pw.FontWeight.bold, letterSpacing: 0.5),
           ),
-        ),
-        child: pw.Row(
-          children: [
-            pw.Text('VINEX TECHNOLOGY',
-                style: pw.TextStyle(color: _white, fontSize: 13,
-                    fontWeight: pw.FontWeight.bold, letterSpacing: 1.5)),
-            pw.Spacer(),
-            pw.Text(
-              '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum'
-              '  —  Continued (Page ${ctx.pageNumber} / ${ctx.pagesCount})',
-              style: pw.TextStyle(
-                  color: const PdfColor(1, 1, 1, 0.85), fontSize: 9,
-                  fontWeight: pw.FontWeight.bold, letterSpacing: 0.5),
-            ),
-          ],
-        ),
+        ]),
       );
     }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FOOTER  — mirrors _A4Page._buildFooter()
+  // FOOTER
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildFooter(pw.Context ctx) {
     return pw.Container(
       width: double.infinity,
-      padding: const pw.EdgeInsets.symmetric(horizontal: 32, vertical: 10),
+      padding: pw.EdgeInsets.symmetric(
+          horizontal: _ftPadH, vertical: _ftPadV),
       decoration: const pw.BoxDecoration(
-        border: pw.Border(top: pw.BorderSide(color: _border, width: 0.8)),
+        border: pw.Border(
+            top: pw.BorderSide(color: _border, width: 0.8)),
       ),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -261,37 +268,35 @@ class InvoicePdfGenerator {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // INFO ROW  — mirrors _A4Page._buildInfoRow()
+  // INFO ROW  (BILL TO card + INVOICE DETAILS card)
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildInfoRow(
       Invoice invoice, String invNum, String dateStr) {
     return pw.SizedBox(
-      height: _infoRowH,
+      height: _infoH,
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
         children: [
-          // BILL TO card
+          // BILL TO
           pw.Expanded(child: _infoCard(
-            title: 'BILL TO',
-            accent: _blue,
+            title: 'BILL TO', accent: _blue,
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Text('Customer',
                     style: pw.TextStyle(fontSize: 10,
                         fontWeight: pw.FontWeight.bold, color: _mid)),
-                pw.SizedBox(height: 4),
+                pw.SizedBox(height: 4 * _s),
                 pw.Text(invoice.customerName,
                     style: pw.TextStyle(fontSize: 13,
                         fontWeight: pw.FontWeight.bold, color: _red)),
               ],
             ),
           )),
-          pw.SizedBox(width: 14),
-          // INVOICE DETAILS card
+          pw.SizedBox(width: _infoGap),
+          // INVOICE DETAILS
           pw.Expanded(child: _infoCard(
-            title: 'INVOICE DETAILS',
-            accent: _green,
+            title: 'INVOICE DETAILS', accent: _green,
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -314,7 +319,7 @@ class InvoicePdfGenerator {
     return pw.Container(
       decoration: pw.BoxDecoration(
         color: _white,
-        borderRadius: pw.BorderRadius.circular(7),
+        borderRadius: pw.BorderRadius.circular(7 * _s),
         border: pw.Border.all(color: _border),
       ),
       child: pw.Column(
@@ -322,19 +327,23 @@ class InvoicePdfGenerator {
         children: [
           pw.Container(
             width: double.infinity,
-            padding: const pw.EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+            padding: pw.EdgeInsets.symmetric(
+                horizontal: _infoTitlePadH, vertical: _infoTitlePadV),
             decoration: pw.BoxDecoration(
               color: accent,
-              borderRadius: const pw.BorderRadius.only(
-                topLeft: pw.Radius.circular(6),
-                topRight: pw.Radius.circular(6),
+              borderRadius: pw.BorderRadius.only(
+                topLeft:  pw.Radius.circular(6 * _s),
+                topRight: pw.Radius.circular(6 * _s),
               ),
             ),
             child: pw.Text(title,
                 style: pw.TextStyle(color: _white, fontSize: 10,
                     fontWeight: pw.FontWeight.bold, letterSpacing: 1.2)),
           ),
-          pw.Padding(padding: const pw.EdgeInsets.all(10), child: child),
+          pw.Padding(
+            padding: pw.EdgeInsets.all(_infoBodyPad),
+            child: child,
+          ),
         ],
       ),
     );
@@ -342,7 +351,7 @@ class InvoicePdfGenerator {
 
   static pw.Widget _detailRow(String label, String value) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.only(bottom: 4),
+      padding: pw.EdgeInsets.only(bottom: 4 * _s),
       child: pw.Row(children: [
         pw.Expanded(child: pw.Text(label,
             style: pw.TextStyle(fontSize: 10,
@@ -355,12 +364,11 @@ class InvoicePdfGenerator {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ITEMS TABLE  — mirrors _A4Page._buildItemsTable()
-  // Column widths, row height, bold cells, IQD-on-right — all identical.
+  // ITEMS TABLE  — exact column widths, row heights, bold cells, IQD-suffix
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildItemsTable(Invoice invoice) {
-    const headers   = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
-    final hAligns   = [
+    const headers  = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
+    final hAligns  = [
       pw.Alignment.center,
       pw.Alignment.centerLeft,
       pw.Alignment.center,
@@ -370,8 +378,8 @@ class InvoicePdfGenerator {
 
     // ── Header row ────────────────────────────────────────────────────────
     pw.Widget hdrCell(int i) => pw.Container(
-      height: _tableHdrH,
-      padding: const pw.EdgeInsets.symmetric(horizontal: 8),
+      height: _tblHdrH,
+      padding: pw.EdgeInsets.symmetric(horizontal: _tblPadH),
       child: pw.Align(
         alignment: hAligns[i],
         child: pw.Text(headers[i],
@@ -381,7 +389,7 @@ class InvoicePdfGenerator {
     );
 
     // ── Data rows ─────────────────────────────────────────────────────────
-    List<pw.TableRow> dataRows = invoice.items.asMap().entries.map((e) {
+    final dataRows = invoice.items.asMap().entries.map((e) {
       final idx    = e.key;
       final item   = e.value;
       final isEven = idx % 2 == 0;
@@ -395,17 +403,15 @@ class InvoicePdfGenerator {
         CurrencyHelper.format(item.unitPrice),
         CurrencyHelper.format(item.totalPrice),
       ];
-
       return pw.TableRow(
-        decoration: pw.BoxDecoration(
-            color: isEven ? _rowEven : _white),
+        decoration: pw.BoxDecoration(color: isEven ? _rowEven : _white),
         children: List.generate(cells.length, (c) => pw.Container(
-          height: _tableRowH,
-          padding: const pw.EdgeInsets.symmetric(horizontal: 8),
+          height: _tblRowH,
+          padding: pw.EdgeInsets.symmetric(horizontal: _tblPadH),
           child: pw.Align(
             alignment: hAligns[c],
             child: pw.Text(cells[c],
-                // ← BOLD, exactly matching the Flutter widget
+                // ← Bold, exactly matching Flutter widget
                 style: pw.TextStyle(fontSize: 11, color: _dark,
                     fontWeight: pw.FontWeight.bold)),
           ),
@@ -413,35 +419,32 @@ class InvoicePdfGenerator {
       );
     }).toList();
 
-    // ── Assemble table ────────────────────────────────────────────────────
     const bSide = pw.BorderSide(color: _border, width: 0.6);
     return pw.ClipRRect(
-      horizontalRadius: 6, verticalRadius: 6,
+      horizontalRadius: 6 * _s, verticalRadius: 6 * _s,
       child: pw.Container(
         decoration: pw.BoxDecoration(
           border: pw.Border.all(color: _border, width: 0.6),
-          borderRadius: pw.BorderRadius.circular(6),
+          borderRadius: pw.BorderRadius.circular(6 * _s),
         ),
         child: pw.Table(
           columnWidths: {
-            0: const pw.FixedColumnWidth(_colW0),  // #
-            1: const pw.FlexColumnWidth(1),         // ITEM NAME
-            2: const pw.FixedColumnWidth(_colW2),  // QTY
-            3: const pw.FixedColumnWidth(_colW3),  // UNIT PRICE
-            4: const pw.FixedColumnWidth(_colW4),  // AMOUNT
+            0: pw.FixedColumnWidth(_col0),   // #
+            1: const pw.FlexColumnWidth(1),  // ITEM NAME
+            2: pw.FixedColumnWidth(_col2),   // QTY
+            3: pw.FixedColumnWidth(_col3),   // UNIT PRICE
+            4: pw.FixedColumnWidth(_col4),   // AMOUNT
           },
           defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
           border: const pw.TableBorder(
-            verticalInside: bSide,
+            verticalInside:   bSide,
             horizontalInside: bSide,
           ),
           children: [
-            // Header row
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: _blue),
-              children: List.generate(5, (i) => hdrCell(i)),
+              children: List.generate(5, hdrCell),
             ),
-            // Data rows
             ...dataRows,
           ],
         ),
@@ -450,7 +453,7 @@ class InvoicePdfGenerator {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // TOTALS  — mirrors _A4Page._buildTotalsRow()
+  // TOTALS BLOCK
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildTotalsRow(Invoice invoice) {
     final hasDiscount = invoice.discount > 0;
@@ -459,11 +462,11 @@ class InvoicePdfGenerator {
     return pw.Row(children: [
       pw.Expanded(child: pw.SizedBox()),
       pw.SizedBox(
-        width: 210,  // ~280 Flutter px × 0.75 pt/px
+        width: _totW,
         child: pw.Container(
           decoration: pw.BoxDecoration(
             color: _white,
-            borderRadius: pw.BorderRadius.circular(7),
+            borderRadius: pw.BorderRadius.circular(7 * _s),
             border: pw.Border.all(color: _border),
           ),
           child: pw.Column(children: [
@@ -483,18 +486,18 @@ class InvoicePdfGenerator {
                     begin: pw.Alignment.centerLeft,
                     end: pw.Alignment.centerRight),
                 borderRadius: pw.BorderRadius.only(
-                  topLeft:  !hasDiscount
-                      ? const pw.Radius.circular(6) : pw.Radius.zero,
-                  topRight: !hasDiscount
-                      ? const pw.Radius.circular(6) : pw.Radius.zero,
+                  topLeft:     !hasDiscount
+                      ? pw.Radius.circular(6 * _s) : pw.Radius.zero,
+                  topRight:    !hasDiscount
+                      ? pw.Radius.circular(6 * _s) : pw.Radius.zero,
                   bottomLeft:  hasDP
-                      ? pw.Radius.zero : const pw.Radius.circular(6),
+                      ? pw.Radius.zero : pw.Radius.circular(6 * _s),
                   bottomRight: hasDP
-                      ? pw.Radius.zero : const pw.Radius.circular(6),
+                      ? pw.Radius.zero : pw.Radius.circular(6 * _s),
                 ),
               ),
-              padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 11),
+              padding: pw.EdgeInsets.symmetric(
+                  horizontal: _totBarPadH, vertical: _totBarPadV),
               child: pw.Row(children: [
                 pw.Expanded(child: pw.Text('TOTAL AMOUNT',
                     style: pw.TextStyle(color: _white, fontSize: 11,
@@ -510,18 +513,18 @@ class InvoicePdfGenerator {
                   _blueLight, _blueLight, bold: true),
               // REMAINING gradient bar
               pw.Container(
-                decoration: const pw.BoxDecoration(
-                  gradient: pw.LinearGradient(
+                decoration: pw.BoxDecoration(
+                  gradient: const pw.LinearGradient(
                       colors: [_blueLight, _blueLighter],
                       begin: pw.Alignment.centerLeft,
                       end: pw.Alignment.centerRight),
                   borderRadius: pw.BorderRadius.only(
-                    bottomLeft:  pw.Radius.circular(6),
-                    bottomRight: pw.Radius.circular(6),
+                    bottomLeft:  pw.Radius.circular(6 * _s),
+                    bottomRight: pw.Radius.circular(6 * _s),
                   ),
                 ),
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 11),
+                padding: pw.EdgeInsets.symmetric(
+                    horizontal: _totBarPadH, vertical: _totBarPadV),
                 child: pw.Row(children: [
                   pw.Expanded(child: pw.Text('Remaining Amount',
                       style: pw.TextStyle(color: _white, fontSize: 11,
@@ -543,7 +546,8 @@ class InvoicePdfGenerator {
       PdfColor labelColor, PdfColor valueColor,
       {bool bold = false}) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: pw.EdgeInsets.symmetric(
+          horizontal: _totPadH, vertical: _totPadV),
       child: pw.Row(children: [
         pw.Expanded(child: pw.Text(label,
             style: pw.TextStyle(fontSize: 10, color: labelColor,
@@ -557,15 +561,15 @@ class InvoicePdfGenerator {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // NOTES  — mirrors _A4Page._buildNotes()
+  // NOTES
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildNotes(String notes) {
     return pw.Container(
       width: double.infinity,
-      padding: const pw.EdgeInsets.all(12),
+      padding: pw.EdgeInsets.all(_notesPad),
       decoration: pw.BoxDecoration(
         color: _notesBg,
-        borderRadius: pw.BorderRadius.circular(7),
+        borderRadius: pw.BorderRadius.circular(7 * _s),
         border: pw.Border.all(color: _notesBdr),
       ),
       child: pw.Column(
@@ -575,7 +579,7 @@ class InvoicePdfGenerator {
               style: pw.TextStyle(fontSize: 10,
                   fontWeight: pw.FontWeight.bold,
                   color: _brown, letterSpacing: 1)),
-          pw.SizedBox(height: 5),
+          pw.SizedBox(height: 5 * _s),
           pw.Text(notes,
               style: pw.TextStyle(fontSize: 11,
                   fontWeight: pw.FontWeight.bold,
