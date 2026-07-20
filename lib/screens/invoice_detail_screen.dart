@@ -1,14 +1,10 @@
-import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
-import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:uuid/uuid.dart';
 import 'dart:convert' show base64Encode;
-import 'package:path_provider/path_provider.dart';
+import 'package:printing/printing.dart';
 import '../utils/js_helper.dart';
 import '../utils/responsive.dart';
 import '../models/invoice_model.dart';
@@ -17,6 +13,7 @@ import '../models/inventory_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/currency_helper.dart';
+import '../utils/invoice_pdf_generator.dart';
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -241,1877 +238,191 @@ class InvoicePrintScreen extends StatefulWidget {
 }
 
 class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
-  // ── حالات التصدير على الموبايل ───────────────────────────────────────────
-  _ExportState _exportState = _ExportState.idle;
-  Uint8List?   _generatedBytes;
+  bool _exporting = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // على الموبايل: نبدأ توليد الصورة تلقائياً بعد أول frame
-    if (!kIsWeb) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _generateA4Image());
-    }
-  }
+  Color get _accentColor => widget.invoice.isQuote
+      ? const Color(0xFF7B5EA7)
+      : AppTheme.primaryBlueDark;
 
-  // ── توليد ملف PDF في الخلفية (الموبايل) ─────────────────────────────────
-  Future<void> _generateA4Image() async {
-    if (!mounted) return;
-    setState(() { _exportState = _ExportState.generating; });
+  String get _invNum =>
+      widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+
+  // ── Export PDF ──────────────────────────────────────────────────────────────
+  Future<void> _exportPdf() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
     try {
-      final invNum     = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
-      final dateStr    = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
+      final bytes = await InvoicePdfGenerator.generate(widget.invoice);
+      final fileName = 'Invoice_$_invNum.pdf';
 
-      // التقاط A4 كاملة بدقة 3× خارج الشاشة
-      final bytes = await _captureFullA4(
-        invNum: invNum, dateStr: dateStr,
-      );
-      if (mounted) setState(() { _generatedBytes = bytes; _exportState = _ExportState.ready; });
-    } catch (e) {
-      if (kDebugMode) debugPrint('generateA4 error: $e');
-      if (mounted) setState(() { _exportState = _ExportState.error; });
-    }
-  }
-
-
-  // ── خيارات مسارات الحفظ ───────────────────────────────────────────────────
-  /// يجمع المسارات المتاحة على الجهاز ويعرض ديالوج الاختيار
-  Future<void> _saveToGallery() async {
-    if (_generatedBytes == null || !mounted) return;
-
-    final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
-    final fileName = 'Invoice_$invNum.pdf';
-
-    // ── جمع المسارات المتاحة ────────────────────────────────────────────────
-    final List<_SaveLocation> locations = [];
-
-    if (Platform.isAndroid) {
-      // 1) Downloads العام (متاح دائماً على Android)
-      try {
-        final dl = Directory('/storage/emulated/0/Download');
-        if (await dl.exists()) {
-          locations.add(_SaveLocation(
-            label: 'مجلد التنزيلات',
-            sublabel: 'Download/',
-            icon: Icons.download_rounded,
-            color: const Color(0xFF1565C0),
-            path: dl.path,
+      if (kIsWeb) {
+        // Web: trigger browser download via JS
+        final b64 = base64Encode(Uint8List.fromList(bytes));
+        evalJs("""
+          (function(){
+            var b64='$b64';
+            var bin=atob(b64);
+            var len=bin.length;
+            var buf=new ArrayBuffer(len);
+            var arr=new Uint8Array(buf);
+            for(var i=0;i<len;i++){ arr[i]=bin.charCodeAt(i); }
+            var blob=new Blob([arr],{type:'application/pdf'});
+            var url=URL.createObjectURL(blob);
+            var a=document.createElement('a');
+            a.href=url; a.download='$fileName';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function(){URL.revokeObjectURL(url);document.body.removeChild(a);},2000);
+          })();
+        """);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('✅ Downloading $fileName'),
+            backgroundColor: Colors.green.shade700,
+            duration: const Duration(seconds: 3),
           ));
         }
-      } catch (_) {}
-
-      // 2) Documents العام
-      try {
-        final dc = Directory('/storage/emulated/0/Documents');
-        if (!await dc.exists()) await dc.create(recursive: true);
-        locations.add(_SaveLocation(
-          label: 'مجلد المستندات',
-          sublabel: 'Documents/',
-          icon: Icons.folder_rounded,
-          color: const Color(0xFF6A1B9A),
-          path: dc.path,
-        ));
-      } catch (_) {}
-
-      // 3) مجلد خاص بالتطبيق داخل Downloads
-      try {
-        final extDirs = await getExternalStorageDirectories(
-            type: StorageDirectory.downloads);
-        if (extDirs != null && extDirs.isNotEmpty) {
-          locations.add(_SaveLocation(
-            label: 'مجلد التطبيق (Downloads)',
-            sublabel: 'Android/data/.../files/downloads/',
-            icon: Icons.inventory_2_rounded,
-            color: const Color(0xFF2E7D32),
-            path: extDirs.first.path,
-          ));
-        }
-      } catch (_) {}
-
-      // 4) مجلد المستندات الداخلي للتطبيق (دائماً متاح)
-      try {
-        final appDocs = await getApplicationDocumentsDirectory();
-        locations.add(_SaveLocation(
-          label: 'مجلد مستندات التطبيق',
-          sublabel: 'Internal storage (private)',
-          icon: Icons.storage_rounded,
-          color: const Color(0xFF795548),
-          path: appDocs.path,
-        ));
-      } catch (_) {}
-    } else {
-      final appDocs = await getApplicationDocumentsDirectory();
-      locations.add(_SaveLocation(
-        label: 'مجلد المستندات',
-        sublabel: appDocs.path,
-        icon: Icons.folder_rounded,
-        color: const Color(0xFF1565C0),
-        path: appDocs.path,
-      ));
-    }
-
-    if (locations.isEmpty || !mounted) return;
-
-    // ── عرض ديالوج الاختيار ────────────────────────────────────────────────
-    final chosen = await showModalBottomSheet<_SaveLocation>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _SaveLocationSheet(
-        fileName: fileName,
-        locations: locations,
-      ),
-    );
-
-    if (chosen == null || !mounted) return;
-
-    // ── الحفظ الفعلي ───────────────────────────────────────────────────────
-    setState(() => _exportState = _ExportState.saving);
-    try {
-      await _writePdfToPath(_generatedBytes!, chosen.path, fileName);
-      if (mounted) setState(() => _exportState = _ExportState.saved);
-    } catch (e) {
-      if (kDebugMode) debugPrint('savePDF error: $e');
-      if (mounted) {
-        setState(() => _exportState = _ExportState.error);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('❌ فشل الحفظ: $e'), backgroundColor: Colors.red,
-        ));
-      }
-    }
-  }
-
-  /// يكتب ملف PDF في المسار المحدد ويعرض رسالة نجاح
-  Future<void> _writePdfToPath(
-      Uint8List bytes, String dirPath, String fileName) async {
-    final dir = Directory(dirPath);
-    if (!await dir.exists()) await dir.create(recursive: true);
-
-    final file = File('$dirPath/$fileName');
-    await file.writeAsBytes(bytes, flush: true);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Expanded(child: Text(
-              '✅ تم حفظ الفاتورة بنجاح\n🖼 $fileName',
-              style: const TextStyle(fontSize: 12),
-            )),
-          ]),
-          backgroundColor: Colors.green.shade700,
-          duration: const Duration(seconds: 5),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  // ── Export Image (ويب فقط) ────────────────────────────────────────────────
-  bool _exportingWeb = false;
-
-  Future<void> _exportImageWeb() async {
-    if (_exportingWeb || !kIsWeb) return;
-    setState(() => _exportingWeb = true);
-    try {
-      final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
-      final dateStr  = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
-      final fileName = 'Invoice_$invNum';
-
-      // استخدم نفس منطق التصدير متعدد الصفحات
-      final bytes = await _captureFullA4(invNum: invNum, dateStr: dateStr);
-      _downloadImageWeb(bytes, '$fileName.png');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('تم تحميل الفاتورة: $fileName.png'),
-          backgroundColor: Colors.green, duration: const Duration(seconds: 3),
-        ));
+      } else {
+        // Mobile: share/open PDF via system share sheet
+        await Printing.sharePdf(
+          bytes: Uint8List.fromList(bytes),
+          filename: fileName,
+        );
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('exportImageWeb error: $e');
+      if (kDebugMode) debugPrint('exportPdf error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('فشل تصدير الصورة: $e'), backgroundColor: Colors.red,
+          content: Text('❌ Export failed: $e'),
+          backgroundColor: Colors.red,
         ));
       }
     } finally {
-      if (mounted) setState(() => _exportingWeb = false);
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  // ── Print ───────────────────────────────────────────────────────────────────
+  Future<void> _printPdf() async {
+    try {
+      await Printing.layoutPdf(
+        onLayout: (_) => InvoicePdfGenerator.generate(widget.invoice)
+            .then((list) => Uint8List.fromList(list)),
+        name: 'Invoice_$_invNum',
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('print error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('❌ Print failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return kIsWeb ? _buildWebView(context) : _buildMobileView(context);
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // واجهة الويب — معاينة + تنزيل JPEG
-  // ════════════════════════════════════════════════════════════════
-  Widget _buildWebView(BuildContext context) {
-    final invoice    = widget.invoice;
-    final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
-    final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFD0D0D0),
-      appBar: AppBar(
-        backgroundColor: AppTheme.primaryBlueDark,
-        foregroundColor: Colors.white,
-        title: Text(
-          invoice.isQuote
-              ? 'معاينة عرض السعر  #$invNum'
-              : 'معاينة الفاتورة  #$invNum',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(left: 8, right: 10),
-            child: ElevatedButton.icon(
-              onPressed: _exportingWeb ? null : _exportImageWeb,
-              icon: _exportingWeb
-                  ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.image_outlined, size: 18),
-              label: Text(_exportingWeb ? 'جاري التنزيل...' : 'Export Image',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: invoice.isQuote
-                    ? const Color(0xFF6A1B9A)
-                    : const Color(0xFFB71C1C),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: Column(children: [
-        Container(
-          width: double.infinity,
-          color: invoice.isQuote
-              ? const Color(0xFF7B5EA7)
-              : AppTheme.primaryBlueDark,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-          child: Row(children: [
-            Icon(
-              invoice.isQuote
-                  ? Icons.request_quote_outlined
-                  : Icons.picture_as_pdf_rounded,
-              color: Colors.white60, size: 15,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              invoice.isQuote
-                  ? 'معاينة عرض السعر — اضغط "Export Image" للتنزيل بصيغة JPEG'
-                  : 'معاينة الفاتورة — اضغط "Export Image" للتنزيل بصيغة JPEG',
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
-            ),
-          ]),
-        ),
-        Expanded(child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-          child: Center(child: SizedBox(width: _kA4W, child: _A4InvoicePage(
-            invoice: invoice, invNum: invNum,
-            dateStr: dateStr,
-          ))),
-        )),
-      ]),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // واجهة الموبايل — معاينة A4 كاملة مع تدوير وطباعة
-  // ════════════════════════════════════════════════════════════════
-  Widget _buildMobileView(BuildContext context) {
-    final invoice    = widget.invoice;
-    final invNum     = invoice.invoiceNumber.toString().padLeft(4, '0');
-    final dateStr    = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
-
-    // حساب الـ scale بحيث تملأ صفحة A4 العرض المتاح
-    final screenW = MediaQuery.of(context).size.width;
-    // هامش 12px من كل جانب = 24px إجمالاً
-    const double hPad  = 12.0;
-    final double availW = screenW - hPad * 2;
-    final double scale  = availW / _kA4W;          // نسبة تصغير بحيث العرض يملأ الشاشة
-    final double scaledPageH = _kA4H * scale;       // الارتفاع الفعلي للصفحة المصغرة
-
     return Scaffold(
       backgroundColor: const Color(0xFFCFD8DC),
       appBar: AppBar(
-        backgroundColor: invoice.isQuote
-            ? const Color(0xFF7B5EA7)
-            : AppTheme.primaryBlueDark,
+        backgroundColor: _accentColor,
         foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          invoice.isQuote
-              ? 'معاينة عرض السعر  #$invNum'
-              : 'معاينة الفاتورة  #$invNum',
+          widget.invoice.isQuote
+              ? 'Preview Quotation  #$_invNum'
+              : 'Preview Invoice  #$_invNum',
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
         ),
-      ),
-      body: Column(
-        children: [
-
-          // ── شريط حالة التوليد ──────────────────────────────────
-          _buildStatusBanner(),
-
-          // ── معاينة A4 مع سكرول عمودي ──────────────────────────
-          Expanded(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 16),
-              child: Center(
-                child: Column(
-                  children: [
-                    // ظل خارجي يحاكي ورقة على سطح مكتب
-                    Container(
-                      width: availW,
-                      height: scaledPageH,
-                      decoration: BoxDecoration(
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            blurRadius: 18,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      // نُقيّد الـ overflow ونُطبّق الـ scale
-                      child: ClipRect(
-                        child: OverflowBox(
-                          alignment: Alignment.topCenter,
-                          maxWidth:  _kA4W,
-                          maxHeight: _kA4H,
-                          child: Transform.scale(
-                            scale: scale,
-                            alignment: Alignment.topCenter,
-                            child: SizedBox(
-                              width:  _kA4W,
-                              height: _kA4H,
-                              // RepaintBoundary لالتقاط الصورة لاحقاً
-                              child: RepaintBoundary(
-                                key: _mobilePreviewKey,
-                                child: _A4InvoicePage(
-                                  invoice: invoice,
-                                  invNum: invNum,
-                                  dateStr: dateStr,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // تلميح صغير
-                    Text(
-                      'A4  ${_kA4W.toInt()} × ${_kA4H.toInt()} px',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey.shade600,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // ── زر الحفظ / التصدير ─────────────────────────────────
-          SafeArea(
-            top: false,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: invoice.isQuote
-                    ? const Color(0xFF7B5EA7)
-                    : AppTheme.primaryBlueDark,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.25),
-                    blurRadius: 8, offset: const Offset(0, -3),
-                  )
-                ],
-              ),
-              child: _buildSaveButton(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // مفتاح للـ RepaintBoundary في المعاينة المصغرة (موبايل)
-  final GlobalKey _mobilePreviewKey = GlobalKey();
-
-  Widget _buildStatusBanner() {
-    switch (_exportState) {
-      case _ExportState.generating:
-        return Container(
-          width: double.infinity,
-          color: const Color(0xFF1565C0),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: const Row(children: [
-            SizedBox(width: 14, height: 14,
-                child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2)),
-            SizedBox(width: 10),
-            Text('جاري تجهيز صورة A4 بدقة عالية…',
-                style: TextStyle(color: Colors.white70, fontSize: 12)),
-          ]),
-        );
-      case _ExportState.ready:
-        return Container(
-          width: double.infinity, color: const Color(0xFF2E7D32),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: const Row(children: [
-            Icon(Icons.check_circle_rounded, color: Colors.white70, size: 16),
-            SizedBox(width: 8),
-            Text('صورة A4 جاهزة — اضغط زر الحفظ أدناه',
-                style: TextStyle(color: Colors.white, fontSize: 12)),
-          ]),
-        );
-      case _ExportState.saving:
-        return Container(
-          width: double.infinity, color: const Color(0xFF1565C0),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: const Row(children: [
-            SizedBox(width: 14, height: 14,
-                child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2)),
-            SizedBox(width: 10),
-            Text('جاري حفظ صورة A4 …',
-                style: TextStyle(color: Colors.white70, fontSize: 12)),
-          ]),
-        );
-      case _ExportState.saved:
-        return Container(
-          width: double.infinity, color: const Color(0xFF1B5E20),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: const Row(children: [
-            Icon(Icons.image_rounded, color: Colors.white, size: 16),
-            SizedBox(width: 8),
-            Text('✅ تم حفظ صورة A4 في المستندات',
-                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-          ]),
-        );
-      case _ExportState.error:
-        return Container(
-          width: double.infinity, color: const Color(0xFFB71C1C),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: Row(children: [
-            const Icon(Icons.error_outline, color: Colors.white70, size: 16),
-            const SizedBox(width: 8),
-            Expanded(child: Text(
-              'خطأ في التوليد — اضغط "إعادة المحاولة"',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            )),
-          ]),
-        );
-      case _ExportState.idle:
-        return Container(
-          width: double.infinity, color: AppTheme.primaryBlueDark,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          child: const Row(children: [
-            Icon(Icons.crop_original_rounded, color: Colors.white60, size: 15),
-            SizedBox(width: 8),
-            Text('جاري تجهيز صورة A4…',
-                style: TextStyle(color: Colors.white70, fontSize: 11)),
-          ]),
-        );
-    }
-  }
-
-  Widget _buildSaveButton() {
-    final bool isGenerating = _exportState == _ExportState.generating;
-    final bool isSaving     = _exportState == _ExportState.saving;
-    final bool isSaved      = _exportState == _ExportState.saved;
-    final bool isReady      = _exportState == _ExportState.ready;
-    final bool isError      = _exportState == _ExportState.error;
-    final bool isDisabled   = isGenerating || isSaving || isSaved;
-
-    final Color btnColor = isSaved
-        ? const Color(0xFF1B5E20)
-        : isError ? const Color(0xFFB71C1C) : Colors.green.shade700;
-
-    final Widget btnIcon = (isGenerating || isSaving)
-        ? const SizedBox(width: 22, height: 22,
-            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-        : isSaved
-            ? const Icon(Icons.check_circle_rounded, size: 24)
-            : const Icon(Icons.image_rounded, size: 24);
-
-    final String btnLabel = isGenerating
-        ? 'جاري تجهيز صورة A4…'
-        : isSaving
-            ? 'جاري حفظ الصورة…'
-            : isSaved
-                ? 'تم حفظ الصورة بنجاح ✔'
-                : isError
-                    ? 'إعادة المحاولة'
-                    : 'حفظ الفاتورة كصورة PNG';
-
-    return ElevatedButton.icon(
-      onPressed: isDisabled ? null
-          : isError ? _generateA4Image
-          : isReady  ? _saveToGallery
-          : null,
-      icon: btnIcon,
-      label: Text(btnLabel,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: btnColor,
-        foregroundColor: Colors.white,
-        disabledBackgroundColor: btnColor.withValues(alpha: 0.6),
-        disabledForegroundColor: Colors.white70,
-        minimumSize: const Size.fromHeight(54),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  /// يرسم الفاتورة بحجم A4 الكامل (794px) خارج الشاشة ويلتقطها
-  /// يلتقط الفاتورة على عدة صفحات A4 (794×1123) كل منها بهيدر وفوتر
-  /// ثم يدمجها في صورة PNG واحدة عمودياً — بدقة 3× (2382 px عرضاً)
-  Future<Uint8List> _captureFullA4({
-    required String invNum,
-    required String dateStr,
-  }) async {
-    if (!mounted) throw Exception('Widget not mounted');
-
-    // ── 1. احسب عدد الصفحات بناءً على عدد العناصر ──────────────────────────
-    const double headerH   = 148.0; // هيدر الشركة + بنر quote إن وُجد
-    const double infoRowH  = 120.0; // BILL TO + INVOICE DETAILS
-    const double tableHdrH =  40.0; // رأس جدول العناصر
-    const double rowH      =  38.0; // ارتفاع صف عنصر واحد
-    const double totalsH   = 130.0; // مربع الإجماليات (قد يزيد بالدفعة)
-    const double notesH    =  80.0; // الملاحظات (تقدير)
-    const double footerH   =  52.0; // الفوتر
-    const double spacer    =  24.0; // مسافات بين الأقسام
-
-    final int itemCount = widget.invoice.items.length;
-    final bool hasNotes = widget.invoice.notes.isNotEmpty;
-    final bool hasDP    = widget.invoice.hasDownPayment;
-
-    // المساحة المتاحة في الصفحة الأولى للعناصر
-    final double firstPageFixed = headerH + infoRowH + tableHdrH
-        + spacer * 3 + footerH;
-    final double lastChunkFixed = totalsH + (hasNotes ? notesH + spacer : 0)
-        + (hasDP ? 36.0 : 0) + footerH + spacer;
-
-    final double firstPageAvail = _kA4H - firstPageFixed;
-    final double midPageAvail   = _kA4H - tableHdrH - footerH - spacer * 2;
-    final double lastPageAvail  = _kA4H - tableHdrH - lastChunkFixed;
-
-    // توزيع العناصر على الصفحات
-    final List<List<int>> pages = [];   // كل صفحة: قائمة indices العناصر
-    int cursor = 0;
-
-    // الصفحة الأولى
-    {
-      final int fit = (firstPageAvail / rowH).floor().clamp(1, itemCount);
-      pages.add(List.generate(fit.clamp(0, itemCount - cursor),
-          (i) => cursor + i));
-      cursor += pages.last.length;
-    }
-
-    // صفحات وسيطة
-    while (cursor < itemCount) {
-      final int remaining = itemCount - cursor;
-      // هل يتسع الباقي في صفحة واحدة أخيرة؟
-      final int fitLast = (lastPageAvail / rowH).floor().clamp(1, remaining);
-      if (fitLast >= remaining) break; // كل الباقي يتسع في صفحة أخيرة
-
-      final int fit = (midPageAvail / rowH).floor().clamp(1, remaining);
-      pages.add(List.generate(fit, (i) => cursor + i));
-      cursor += pages.last.length;
-    }
-
-    // الصفحة الأخيرة (العناصر المتبقية + الإجماليات)
-    if (cursor < itemCount) {
-      pages.add(List.generate(itemCount - cursor, (i) => cursor + i));
-    }
-
-    // إذا كان العدد صغيراً جداً يكفي صفحة واحدة
-    if (pages.isEmpty) pages.add(List.generate(itemCount, (i) => i));
-
-    final int totalPages = pages.length;
-
-    // ── 2. التقط كل صفحة كصورة منفردة ─────────────────────────────────────
-    final List<Uint8List> pageImages = [];
-
-    for (int p = 0; p < totalPages; p++) {
-      final bool isFirst = p == 0;
-      final bool isLast  = p == totalPages - 1;
-      final List<int> itemIndices = pages[p];
-
-      final pageKey = GlobalKey();
-      late OverlayEntry entry;
-
-      entry = OverlayEntry(
-        builder: (_) => Positioned(
-          left: -(_kA4W + 300),
-          top: 0,
-          child: RepaintBoundary(
-            key: pageKey,
-            child: _A4PageSlice(
-              invoice: widget.invoice,
-              invNum: invNum,
-              dateStr: dateStr,
-              itemIndices: itemIndices,
-              showInfoRow: isFirst,
-              showTotals: isLast,
-              pageNum: p + 1,
-              totalPages: totalPages,
-            ),
-          ),
-        ),
-      );
-
-      if (!mounted) throw Exception('Widget not mounted');
-      Overlay.of(context).insert(entry);
-      await Future.delayed(const Duration(milliseconds: 350));
-      await WidgetsBinding.instance.endOfFrame;
-
-      try {
-        final boundary = pageKey.currentContext?.findRenderObject()
-            as RenderRepaintBoundary?;
-        if (boundary == null) throw Exception('صفحة $p لم تُرسم');
-        final img = await boundary.toImage(pixelRatio: 3.0);
-        final bd  = await img.toByteData(format: ui.ImageByteFormat.png);
-        if (bd == null) throw Exception('فشل تحويل صفحة $p');
-        pageImages.add(bd.buffer.asUint8List());
-      } finally {
-        entry.remove();
-      }
-    }
-
-    // ── 3. ادمج الصور عمودياً ───────────────────────────────────────────────
-    if (pageImages.length == 1) return pageImages.first;
-    return _mergeImagesVertically(pageImages);
-  }
-
-  /// دمج قائمة صور PNG عمودياً في صورة واحدة
-  Future<Uint8List> _mergeImagesVertically(List<Uint8List> images) async {
-    // فك تشفير كل صورة
-    final List<ui.Image> decoded = [];
-    for (final bytes in images) {
-      final codec = await ui.instantiateImageCodec(bytes);
-      final frame = await codec.getNextFrame();
-      decoded.add(frame.image);
-    }
-
-    final int w = decoded.first.width;
-    final int totalH = decoded.fold(0, (sum, img) => sum + img.height);
-
-    final recorder = ui.PictureRecorder();
-    final canvas    = Canvas(recorder);
-
-    double dy = 0;
-    for (final img in decoded) {
-      canvas.drawImage(img, Offset(0, dy), Paint());
-      dy += img.height;
-    }
-
-    final picture = recorder.endRecording();
-    final combined = await picture.toImage(w, totalH);
-    final bd = await combined.toByteData(format: ui.ImageByteFormat.png);
-    if (bd == null) throw Exception('فشل دمج الصفحات');
-    return bd.buffer.asUint8List();
-  }
-
-  // ── تنزيل الصورة على الويب ────────────────────────────────────────────────
-  void _downloadImageWeb(Uint8List bytes, String fileName) {
-    final b64 = base64Encode(bytes);
-    evalJs("""
-      (function(){
-        var b64='$b64';
-        var bin=atob(b64);
-        var len=bin.length;
-        var buf=new ArrayBuffer(len);
-        var arr=new Uint8Array(buf);
-        for(var i=0;i<len;i++){ arr[i]=bin.charCodeAt(i); }
-        var blob=new Blob([arr],{type:'image/jpeg'});
-        var url=URL.createObjectURL(blob);
-        var a=document.createElement('a');
-        a.href=url; a.download='$fileName';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function(){URL.revokeObjectURL(url);document.body.removeChild(a);},2000);
-      })();
-    """);
-  }
-
-}
-
-// ── Export State Enum ──────────────────────────────────────────────────────
-enum _ExportState { idle, generating, ready, saving, saved, error }
-
-// ── نموذج بيانات موقع الحفظ ───────────────────────────────────────────────
-class _SaveLocation {
-  final String label;
-  final String sublabel;
-  final IconData icon;
-  final Color color;
-  final String path;
-  const _SaveLocation({
-    required this.label,
-    required this.sublabel,
-    required this.icon,
-    required this.color,
-    required this.path,
-  });
-}
-
-// ── BottomSheet اختيار مكان الحفظ ────────────────────────────────────────
-class _SaveLocationSheet extends StatelessWidget {
-  final String fileName;
-  final List<_SaveLocation> locations;
-  const _SaveLocationSheet({required this.fileName, required this.locations});
-
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ── مقبض السحب ─────────────────────────────────────────────
-            Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 4),
-              width: 40, height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            // ── العنوان ─────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A3A5C).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.save_alt_rounded,
-                      color: Color(0xFF1A3A5C), size: 22),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('اختر مكان الحفظ',
-                          style: TextStyle(fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A1A1A))),
-                      Text(fileName,
-                          style: TextStyle(fontSize: 11,
-                              color: Colors.grey.shade600)),
-                    ],
-                  ),
-                ),
-              ]),
-            ),
-
-            const Divider(height: 20, indent: 20, endIndent: 20),
-
-            // ── قائمة المواقع ───────────────────────────────────────────
-            ...locations.map((loc) => _LocationTile(
-              loc: loc,
-              onTap: () => Navigator.pop(context, loc),
-            )),
-
-            // ── زر الإلغاء ─────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.pop(context, null),
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  label: const Text('إلغاء'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.grey.shade700,
-                    side: BorderSide(color: Colors.grey.shade300),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            ),
-
-            // مسافة أمان للـ notch
-            SizedBox(height: MediaQuery.of(context).padding.bottom),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── عنصر واحد في قائمة المواقع ───────────────────────────────────────────
-class _LocationTile extends StatelessWidget {
-  final _SaveLocation loc;
-  final VoidCallback onTap;
-  const _LocationTile({required this.loc, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: loc.color.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: loc.color.withValues(alpha: 0.2)),
-          ),
-          child: Row(children: [
-            Container(
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: loc.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(loc.icon, color: loc.color, size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(loc.label,
-                    style: TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade900)),
-                const SizedBox(height: 2),
-                Text(loc.sublabel,
-                    style: TextStyle(
-                        fontSize: 10, color: Colors.grey.shade500),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-              ],
-            )),
-            Icon(Icons.arrow_forward_ios_rounded,
-                size: 14, color: Colors.grey.shade400),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-
-// ── A4 Invoice Page ──────────────────────────────────────────────────────────
-// A4 dimensions at 96 dpi
-const double _kA4W = 794;
-const double _kA4H = 1123;
-
-class _A4InvoicePage extends StatelessWidget {
-  final Invoice invoice;
-  final String invNum;
-  final String dateStr;
-
-  const _A4InvoicePage({
-    required this.invoice,
-    required this.invNum,
-    required this.dateStr,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: _kA4W,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: _kA4H),
-        child: IntrinsicHeight(
-          child: Container(
-            width: _kA4W,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.25),
-                  blurRadius: 20,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-          // ── TOP HEADER ─────────────────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 28),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppTheme.primaryBlueDark, Color(0xFF1B5E20)],
-                begin: Alignment.topLeft,
-                end: Alignment.topRight,
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Logo + company name
-                Image.asset(
-                  'assets/images/company_logo.png',
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Icon(
-                      Icons.business_rounded,
-                      color: Colors.white,
-                      size: 30),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('VINEX TECHNOLOGY',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 2,
-                          )),
-                      const SizedBox(height: 8),
-                      // Address
-                      Row(
-                        children: [
-                          Icon(Icons.location_on_outlined,
-                              size: 11,
-                              color: Colors.white.withValues(alpha: 0.65)),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              'Baghdad, Yarmouk, Al-Fakhri 2 Building',
-                              style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.85),
-                                  fontSize: 10,
-                                  letterSpacing: 0.2),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      // Phone
-                      Row(
-                        children: [
-                          Icon(Icons.phone_outlined,
-                              size: 11,
-                              color: Colors.white.withValues(alpha: 0.65)),
-                          const SizedBox(width: 4),
-                          Text(
-                            '07803662728',
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                fontSize: 10,
-                                letterSpacing: 0.5),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                // Invoice badge
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.4)),
-                      ),
-                      child: const Text(
-                        'INVOICE',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                            letterSpacing: 3),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text('#$invNum',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // ── QUOTE BANNER (عرض السعر) ───────────────────────────────────
-          if (invoice.isQuote)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 9),
-              decoration: const BoxDecoration(
-                color: Color(0xFF7B5EA7),
-              ),
-              child: const Center(
-                child: Text(
-                  'عرض سعر — Price Quotation',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.5,
-                  ),
-                ),
-              ),
-            ),
-
-          // ── INFO ROW (Bill To + Invoice Details) ───────────────────────
+        actions: [
+          // ── Print button ──────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(40, 24, 40, 0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Bill To
-                Expanded(
-                  child: _InfoCard(
-                    title: 'BILL TO',
-                    accentColor: AppTheme.primaryBlue,
-                    rows: [
-                      _FieldRow('Customer', invoice.customerName),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // Invoice Details
-                Expanded(
-                  child: _InfoCard(
-                    title: 'INVOICE DETAILS',
-                    accentColor: const Color(0xFF2E7D32),
-                    rows: [
-                      _FieldRow('Invoice No.', '#$invNum'),
-                      _FieldRow('Date', dateStr),
-                      _FieldRow('Items', '${invoice.items.length} item(s)'),
-                    ],
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.only(right: 4),
+            child: TextButton.icon(
+              onPressed: _printPdf,
+              icon: const Icon(Icons.print_rounded, size: 18, color: Colors.white),
+              label: const Text('Print',
+                  style: TextStyle(color: Colors.white,
+                      fontSize: 12, fontWeight: FontWeight.bold)),
             ),
           ),
-
-          const SizedBox(height: 24),
-
-          // ── ITEMS TABLE ────────────────────────────────────────────────
+          // ── Export PDF button ─────────────────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: _ItemsTable(invoice: invoice),
-          ),
-
-          const SizedBox(height: 20),
-
-          // ── NOTES + TOTALS ROW ─────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Notes (left side)
-                if (invoice.notes.isNotEmpty)
-                  Expanded(
-                    flex: 3,
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFFDE7),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFFFECB3)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('NOTES',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF795548),
-                                  letterSpacing: 1)),
-                          const SizedBox(height: 6),
-                          Text(invoice.notes,
-                              style: const TextStyle(
-                                  fontSize: 14,
-                                  color: AppTheme.textDark,
-                                  height: 1.4)),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  const Expanded(flex: 3, child: SizedBox()),
-                const SizedBox(width: 16),
-                // Totals (right side)
-                Expanded(
-                  flex: 2,
-                  child: _TotalsBox(invoice: invoice),
-                ),
-              ],
-            ),
-          ),
-
-          const Spacer(),
-
-          // ── FOOTER ────────────────────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-            decoration: const BoxDecoration(
-              border: Border(
-                  top: BorderSide(color: Color(0xFFE5E7EB), width: 1)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Thank you for your business!',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textGrey,
-                        fontStyle: FontStyle.italic)),
-                Text('VINEX TECHNOLOGY © 2025',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.primaryBlue,
-                        fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// _A4PageSlice — صفحة A4 واحدة من الفاتورة (للتصدير متعدد الصفحات)
-// كل صفحة: هيدر + شريحة عناصر + (إجماليات في الصفحة الأخيرة) + فوتر
-// ══════════════════════════════════════════════════════════════════════════════
-class _A4PageSlice extends StatelessWidget {
-  final Invoice invoice;
-  final String invNum;
-  final String dateStr;
-  final List<int> itemIndices;   // indices العناصر في هذه الصفحة
-  final bool showInfoRow;        // true → الصفحة الأولى فقط
-  final bool showTotals;         // true → الصفحة الأخيرة فقط
-  final int pageNum;
-  final int totalPages;
-
-  const _A4PageSlice({
-    required this.invoice,
-    required this.invNum,
-    required this.dateStr,
-    required this.itemIndices,
-    required this.showInfoRow,
-    required this.showTotals,
-    required this.pageNum,
-    required this.totalPages,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: _kA4W,
-      height: _kA4H,
-      child: Container(
-        width: _kA4W,
-        height: _kA4H,
-        color: Colors.white,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── HEADER (في كل صفحة) ────────────────────────────────────────
-            _buildPageHeader(),
-
-            // ── QUOTE BANNER (الصفحة الأولى فقط) ──────────────────────────
-            if (showInfoRow && invoice.isQuote)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 9),
-                color: const Color(0xFF7B5EA7),
-                child: const Center(
-                  child: Text('عرض سعر — Price Quotation',
-                      style: TextStyle(color: Colors.white, fontSize: 14,
-                          fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                ),
-              ),
-
-            // ── INFO ROW (الصفحة الأولى فقط) ───────────────────────────────
-            if (showInfoRow) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(40, 20, 40, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: _InfoCard(title: 'BILL TO',
-                        accentColor: AppTheme.primaryBlue,
-                        rows: [_FieldRow('Customer', invoice.customerName)])),
-                    const SizedBox(width: 16),
-                    Expanded(child: _InfoCard(title: 'INVOICE DETAILS',
-                        accentColor: const Color(0xFF2E7D32),
-                        rows: [
-                          _FieldRow('Invoice No.', '#$invNum'),
-                          _FieldRow('Date', dateStr),
-                          _FieldRow('Items', '${invoice.items.length} item(s)'),
-                        ])),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-            ] else
-              const SizedBox(height: 16),
-
-            // ── جدول العناصر (شريحة) ──────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: _buildTableSlice(),
-            ),
-
-            const Spacer(),
-
-            // ── NOTES + TOTALS (الصفحة الأخيرة فقط) ───────────────────────
-            if (showTotals) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (invoice.notes.isNotEmpty)
-                      Expanded(
-                        flex: 3,
-                        child: Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFFDE7),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFFFECB3)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('NOTES', style: TextStyle(fontSize: 13,
-                                  fontWeight: FontWeight.bold, color: Color(0xFF795548))),
-                              const SizedBox(height: 6),
-                              Text(invoice.notes, style: const TextStyle(
-                                  fontSize: 12, color: Color(0xFF4E342E))),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (invoice.notes.isNotEmpty) const SizedBox(width: 16),
-                    Expanded(
-                      flex: 2,
-                      child: _TotalsBox(invoice: invoice),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // ── FOOTER (في كل صفحة) ───────────────────────────────────────
-            _buildPageFooter(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPageHeader() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppTheme.primaryBlueDark, Color(0xFF1B5E20)],
-          begin: Alignment.topLeft,
-          end: Alignment.topRight,
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Image.asset('assets/images/company_logo.png',
-              width: 56, height: 56, fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) =>
-                  const Icon(Icons.business_rounded, color: Colors.white, size: 28)),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('VINEX TECHNOLOGY',
-                    style: TextStyle(color: Colors.white, fontSize: 20,
-                        fontWeight: FontWeight.bold, letterSpacing: 1.8)),
-                const SizedBox(height: 6),
-                Row(children: [
-                  Icon(Icons.location_on_outlined, size: 10,
-                      color: Colors.white.withValues(alpha: 0.65)),
-                  const SizedBox(width: 4),
-                  Text('Baghdad, Iraq  |  +964 770 000 0000',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8),
-                          fontSize: 11)),
-                ]),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(invoice.isQuote ? 'QUOTATION' : 'INVOICE',
-                  style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 11, letterSpacing: 1.5)),
-              Text('#$invNum',
-                  style: const TextStyle(color: Colors.white,
-                      fontSize: 22, fontWeight: FontWeight.bold)),
-              if (totalPages > 1)
-                Text('Page $pageNum / $totalPages',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 10)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTableSlice() {
-    final items = itemIndices.map((i) => invoice.items[i]).toList();
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        children: [
-          // رأس الجدول
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: const BoxDecoration(
-              color: AppTheme.primaryBlue,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
-            ),
-            child: const Row(children: [
-              SizedBox(width: 32, child: Text('#', style: _thStyle, textAlign: TextAlign.center)),
-              Expanded(flex: 5, child: Text('ITEM NAME', style: _thStyle)),
-              SizedBox(width: 60, child: Text('QTY', style: _thStyle, textAlign: TextAlign.center)),
-              SizedBox(width: 110, child: Text('UNIT PRICE', style: _thStyle, textAlign: TextAlign.right)),
-              SizedBox(width: 110, child: Text('AMOUNT', style: _thStyle, textAlign: TextAlign.right)),
-            ]),
-          ),
-          // صفوف العناصر
-          ...items.asMap().entries.map((entry) {
-            final localIdx = entry.key;
-            final globalIdx = itemIndices[localIdx];
-            final item = entry.value;
-            final isEven = globalIdx % 2 == 0;
-            final isLast = localIdx == items.length - 1;
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isEven ? Colors.white : const Color(0xFFF0F4FF),
-                borderRadius: isLast && !showTotals
-                    ? const BorderRadius.vertical(bottom: Radius.circular(7))
-                    : BorderRadius.zero,
-              ),
-              child: Row(children: [
-                SizedBox(width: 32,
-                    child: Container(
-                      width: 22, height: 22,
-                      decoration: const BoxDecoration(
-                          color: AppTheme.primaryBlue, shape: BoxShape.circle),
-                      child: Center(child: Text('${globalIdx + 1}',
-                          style: const TextStyle(color: Colors.white,
-                              fontSize: 10, fontWeight: FontWeight.bold))),
-                    )),
-                Expanded(flex: 5, child: Text(item.itemName,
-                    style: const TextStyle(fontSize: 12,
-                        fontWeight: FontWeight.bold, color: Colors.black87))),
-                SizedBox(width: 60, child: Text(
-                    item.quantity == item.quantity.roundToDouble()
-                        ? item.quantity.toInt().toString()
-                        : item.quantity.toStringAsFixed(2),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12,
-                        fontWeight: FontWeight.bold, color: Colors.black54))),
-                SizedBox(width: 110, child: Text(CurrencyHelper.format(item.unitPrice),
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 12,
-                        fontWeight: FontWeight.bold, color: Colors.black54))),
-                SizedBox(width: 110, child: Text(CurrencyHelper.format(item.totalPrice),
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 12,
-                        fontWeight: FontWeight.bold, color: Colors.black))),
-              ]),
-            );
-          }),
-          if (showTotals)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(7)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text('${invoice.items.length} items total',
-                      style: const TextStyle(fontSize: 11,
-                          color: AppTheme.textGrey, fontStyle: FontStyle.italic)),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPageFooter() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFE5E7EB), width: 1)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          const Text('Thank you for your business!',
-              style: TextStyle(fontSize: 11, color: AppTheme.textGrey,
-                  fontStyle: FontStyle.italic)),
-          Text('VINEX TECHNOLOGY © 2025',
-              style: TextStyle(fontSize: 11, color: AppTheme.primaryBlue,
-                  fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-}
-class _InfoCard extends StatelessWidget {
-  final String title;
-  final Color accentColor;
-  final List<_FieldRow> rows;
-
-  const _InfoCard(
-      {required this.title,
-      required this.accentColor,
-      required this.rows});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: accentColor,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(7)),
-            ),
-            child: Text(title,
+            padding: const EdgeInsets.only(right: 10),
+            child: ElevatedButton.icon(
+              onPressed: _exporting ? null : _exportPdf,
+              icon: _exporting
+                  ? const SizedBox(
+                      width: 14, height: 14,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.picture_as_pdf_rounded, size: 16),
+              label: Text(
+                _exporting ? 'Exporting…' : 'Export PDF',
                 style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2)),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: rows
-                  .map((r) => Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              width: 80,
-                              child: Text(r.label,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppTheme.textGrey)),
-                            ),
-                            const Text(': ',
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    color: AppTheme.textGrey)),
-                            Expanded(
-                              child: Text(r.value,
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: (r.label == 'Customer' ||
-                                              r.label == 'Invoice No.' ||
-                                              r.label == 'Date')
-                                          ? const Color(0xFFCC0000)
-                                          : Colors.black)),
-                            ),
-                          ],
-                        ),
-                      ))
-                  .toList(),
+                    fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: widget.invoice.isQuote
+                    ? const Color(0xFF4A148C)
+                    : const Color(0xFFB71C1C),
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
             ),
           ),
         ],
       ),
-    );
-  }
-}
 
-class _FieldRow {
-  final String label;
-  final String value;
-  const _FieldRow(this.label, this.value);
-}
-
-// ── Items Table ───────────────────────────────────────────────────────────────
-class _ItemsTable extends StatelessWidget {
-  final Invoice invoice;
-  const _ItemsTable({required this.invoice});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        children: [
-          // Header row
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: const BoxDecoration(
-              color: AppTheme.primaryBlue,
-              borderRadius:
-                  BorderRadius.vertical(top: Radius.circular(7)),
-            ),
-            child: const Row(
-              children: [
-                SizedBox(
-                    width: 32,
-                    child: Text('#',
-                        style: _thStyle,
-                        textAlign: TextAlign.center)),
-                Expanded(
-                    flex: 5,
-                    child: Text('ITEM NAME', style: _thStyle)),
-                SizedBox(
-                    width: 60,
-                    child: Text('QTY',
-                        style: _thStyle,
-                        textAlign: TextAlign.center)),
-                SizedBox(
-                    width: 110,
-                    child: Text('UNIT PRICE',
-                        style: _thStyle,
-                        textAlign: TextAlign.right)),
-                SizedBox(
-                    width: 110,
-                    child: Text('AMOUNT',
-                        style: _thStyle,
-                        textAlign: TextAlign.right)),
-              ],
-            ),
-          ),
-          // Data rows
-          ...invoice.items.asMap().entries.map((entry) {
-            final idx = entry.key;
-            final item = entry.value;
-            final isEven = idx % 2 == 0;
-            final isLast = idx == invoice.items.length - 1;
-            return Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isEven ? Colors.white : const Color(0xFFF0F4FF),
-                borderRadius: isLast
-                    ? const BorderRadius.vertical(
-                        bottom: Radius.circular(7))
-                    : null,
-              ),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 32,
-                    child: Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryBlue
-                            .withValues(alpha: 0.12),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text('${item.sequence}',
-                            style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.primaryBlue)),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    flex: 5,
-                    child: Text(item.itemName,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textDark)),
-                  ),
-                  SizedBox(
-                    width: 60,
-                    child: Text(
-                      item.quantity % 1 == 0
-                          ? item.quantity.toInt().toString()
-                          : item.quantity.toStringAsFixed(2),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF333333)),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 110,
-                    child: Text(CurrencyHelper.format(item.unitPrice),
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF333333))),
-                  ),
-                  SizedBox(
-                    width: 110,
-                    child: Text(CurrencyHelper.format(item.totalPrice),
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black)),
-                  ),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-}
-
-const _thStyle = TextStyle(
-  color: Colors.white,
-  fontSize: 10,
-  fontWeight: FontWeight.bold,
-  letterSpacing: 0.5,
-);
-
-// ── Totals Box ────────────────────────────────────────────────────────────────
-class _TotalsBox extends StatelessWidget {
-  final Invoice invoice;
-  const _TotalsBox({required this.invoice});
-
-  @override
-  Widget build(BuildContext context) {
-    final hasDiscount = invoice.discount > 0;
-    final subtotal = invoice.subtotal;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        children: [
-          // Subtotal row (only show when discount exists)
-          if (hasDiscount) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Subtotal',
-                      style: TextStyle(
-                          fontSize: 13, color: AppTheme.textGrey)),
-                  Text(CurrencyHelper.format(subtotal),
-                      style: const TextStyle(
-                          fontSize: 13, color: Colors.black)),
-                ],
-              ),
-            ),
-            // Discount row
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.discount_outlined,
-                          size: 11, color: Color(0xFFE65100)),
-                      const SizedBox(width: 4),
-                      const Text('Discount',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFFE65100),
-                              fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  Text('- ${CurrencyHelper.format(invoice.discount)}',
-                      style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFFE65100),
-                          fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: Divider(height: 14, thickness: 0.8),
-            ),
-          ] else
-            const SizedBox(height: 4),
-          // Grand total
-          Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
-                begin: Alignment.topLeft,
-                end: Alignment.topRight,
-              ),
-              borderRadius: invoice.hasDownPayment
-                  ? BorderRadius.zero
-                  : const BorderRadius.vertical(bottom: Radius.circular(7)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('TOTAL AMOUNT',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5)),
-                Text(CurrencyHelper.format(invoice.totalAmount),
-                    style: const TextStyle(
-                        color: Color(0xFFFFFF00),
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-          // Down Payment & Remaining Amount
-          if (invoice.hasDownPayment) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(children: [
-                    const Icon(Icons.payments_outlined,
-                        size: 13, color: Color(0xFF1565C0)),
-                    const SizedBox(width: 4),
-                    const Text('Down Payment',
-                        style: TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF1565C0),
-                            fontWeight: FontWeight.bold)),
-                  ]),
-                  Text(CurrencyHelper.format(invoice.downPayment),
-                      style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF1565C0),
-                          fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: Divider(height: 14, thickness: 0.8),
-            ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.topRight,
-                ),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(7)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Remaining Amount',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5)),
-                  Text(CurrencyHelper.format(invoice.remainingAmount),
-                      style: const TextStyle(
-                          color: Color(0xFFFFFF00),
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold)),
-                ],
-              ),
+      // ── PdfPreview — multi-page, very high quality ──────────────────────────
+      body: PdfPreview(
+        // Build PDF bytes from our generator (pw.MultiPage → multi-page)
+        build: (format) => InvoicePdfGenerator.generate(widget.invoice)
+            .then((list) => Uint8List.fromList(list)),
+        // Display at up to 900 logical pixels wide (fills most screens beautifully)
+        maxPageWidth: 900,
+        // Use high DPI for crisp text and graphics
+        dpi: 150,
+        // Show the built-in PdfPreview toolbar (zoom, share, print)
+        allowSharing: false,
+        allowPrinting: false,
+        canChangePageFormat: false,
+        canChangeOrientation: false,
+        canDebug: false,
+        // Styling
+        pdfPreviewPageDecoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.30),
+              blurRadius: 14,
+              spreadRadius: 1,
+              offset: const Offset(0, 5),
             ),
           ],
-        ],
+        ),
+        scrollViewDecoration: const BoxDecoration(
+          color: Color(0xFFCFD8DC),
+        ),
+        previewPageMargin: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 20),
+        loadingWidget: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(
+                  color: _accentColor, strokeWidth: 3),
+              const SizedBox(height: 14),
+              Text('Generating PDF preview…',
+                  style: TextStyle(
+                      fontSize: 13, color: Colors.grey.shade600)),
+            ],
+          ),
+        ),
       ),
     );
   }
