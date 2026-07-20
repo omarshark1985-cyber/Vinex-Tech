@@ -410,7 +410,6 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   }
 
   // ── Export Image (ويب فقط) ────────────────────────────────────────────────
-  final GlobalKey _invoiceKey = GlobalKey();
   bool _exportingWeb = false;
 
   Future<void> _exportImageWeb() async {
@@ -418,18 +417,16 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     setState(() => _exportingWeb = true);
     try {
       final invNum   = widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+      final dateStr  = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
       final fileName = 'Invoice_$invNum';
-      await Future.delayed(const Duration(milliseconds: 200));
-      final boundary = _invoiceKey.currentContext?.findRenderObject()
-          as RenderRepaintBoundary?;
-      if (boundary == null) throw Exception('لم يتم العثور على الفاتورة');
-      final ui.Image uiImage = await boundary.toImage(pixelRatio: 3.0);
-      final ByteData? pngData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
-      if (pngData == null) throw Exception('فشل تحويل الصورة');
-      _downloadImageWeb(pngData.buffer.asUint8List(), '$fileName.jpg');
+
+      // استخدم نفس منطق التصدير متعدد الصفحات
+      final bytes = await _captureFullA4(invNum: invNum, dateStr: dateStr);
+      _downloadImageWeb(bytes, '$fileName.png');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('تم تحميل الفاتورة: $fileName.jpg'),
+          content: Text('تم تحميل الفاتورة: $fileName.png'),
           backgroundColor: Colors.green, duration: const Duration(seconds: 3),
         ));
       }
@@ -517,13 +514,10 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
         ),
         Expanded(child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-          child: Center(child: RepaintBoundary(
-            key: _invoiceKey,
-            child: SizedBox(width: _kA4W, child: _A4InvoicePage(
-              invoice: invoice, invNum: invNum,
-              dateStr: dateStr,
-            )),
-          )),
+          child: Center(child: SizedBox(width: _kA4W, child: _A4InvoicePage(
+            invoice: invoice, invNum: invNum,
+            dateStr: dateStr,
+          ))),
         )),
       ]),
     );
@@ -786,61 +780,153 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   }
 
   /// يرسم الفاتورة بحجم A4 الكامل (794px) خارج الشاشة ويلتقطها
-  /// النتيجة: صورة بحجم 2382 × ~3369 px (pixelRatio 3×) — جودة عالية
+  /// يلتقط الفاتورة على عدة صفحات A4 (794×1123) كل منها بهيدر وفوتر
+  /// ثم يدمجها في صورة PNG واحدة عمودياً — بدقة 3× (2382 px عرضاً)
   Future<Uint8List> _captureFullA4({
     required String invNum,
     required String dateStr,
   }) async {
-    // أنشئ RepaintBoundary خارج الشاشة داخل OverlayEntry مؤقت
-    final completer = Completer<Uint8List>();
-    final offKey = GlobalKey();
+    if (!mounted) throw Exception('Widget not mounted');
 
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => Positioned(
-        // خارج منطقة الرؤية تماماً
-        left: -(_kA4W + 200),
-        top: 0,
-        child: RepaintBoundary(
-          key: offKey,
-          child: SizedBox(
-            width: _kA4W,
-            child: _A4InvoicePage(
+    // ── 1. احسب عدد الصفحات بناءً على عدد العناصر ──────────────────────────
+    const double headerH   = 148.0; // هيدر الشركة + بنر quote إن وُجد
+    const double infoRowH  = 120.0; // BILL TO + INVOICE DETAILS
+    const double tableHdrH =  40.0; // رأس جدول العناصر
+    const double rowH      =  38.0; // ارتفاع صف عنصر واحد
+    const double totalsH   = 130.0; // مربع الإجماليات (قد يزيد بالدفعة)
+    const double notesH    =  80.0; // الملاحظات (تقدير)
+    const double footerH   =  52.0; // الفوتر
+    const double spacer    =  24.0; // مسافات بين الأقسام
+
+    final int itemCount = widget.invoice.items.length;
+    final bool hasNotes = widget.invoice.notes.isNotEmpty;
+    final bool hasDP    = widget.invoice.hasDownPayment;
+
+    // المساحة المتاحة في الصفحة الأولى للعناصر
+    final double firstPageFixed = headerH + infoRowH + tableHdrH
+        + spacer * 3 + footerH;
+    final double lastChunkFixed = totalsH + (hasNotes ? notesH + spacer : 0)
+        + (hasDP ? 36.0 : 0) + footerH + spacer;
+
+    final double firstPageAvail = _kA4H - firstPageFixed;
+    final double midPageAvail   = _kA4H - tableHdrH - footerH - spacer * 2;
+    final double lastPageAvail  = _kA4H - tableHdrH - lastChunkFixed;
+
+    // توزيع العناصر على الصفحات
+    final List<List<int>> pages = [];   // كل صفحة: قائمة indices العناصر
+    int cursor = 0;
+
+    // الصفحة الأولى
+    {
+      final int fit = (firstPageAvail / rowH).floor().clamp(1, itemCount);
+      pages.add(List.generate(fit.clamp(0, itemCount - cursor),
+          (i) => cursor + i));
+      cursor += pages.last.length;
+    }
+
+    // صفحات وسيطة
+    while (cursor < itemCount) {
+      final int remaining = itemCount - cursor;
+      // هل يتسع الباقي في صفحة واحدة أخيرة؟
+      final int fitLast = (lastPageAvail / rowH).floor().clamp(1, remaining);
+      if (fitLast >= remaining) break; // كل الباقي يتسع في صفحة أخيرة
+
+      final int fit = (midPageAvail / rowH).floor().clamp(1, remaining);
+      pages.add(List.generate(fit, (i) => cursor + i));
+      cursor += pages.last.length;
+    }
+
+    // الصفحة الأخيرة (العناصر المتبقية + الإجماليات)
+    if (cursor < itemCount) {
+      pages.add(List.generate(itemCount - cursor, (i) => cursor + i));
+    }
+
+    // إذا كان العدد صغيراً جداً يكفي صفحة واحدة
+    if (pages.isEmpty) pages.add(List.generate(itemCount, (i) => i));
+
+    final int totalPages = pages.length;
+
+    // ── 2. التقط كل صفحة كصورة منفردة ─────────────────────────────────────
+    final List<Uint8List> pageImages = [];
+
+    for (int p = 0; p < totalPages; p++) {
+      final bool isFirst = p == 0;
+      final bool isLast  = p == totalPages - 1;
+      final List<int> itemIndices = pages[p];
+
+      final pageKey = GlobalKey();
+      late OverlayEntry entry;
+
+      entry = OverlayEntry(
+        builder: (_) => Positioned(
+          left: -(_kA4W + 300),
+          top: 0,
+          child: RepaintBoundary(
+            key: pageKey,
+            child: _A4PageSlice(
               invoice: widget.invoice,
               invNum: invNum,
               dateStr: dateStr,
+              itemIndices: itemIndices,
+              showInfoRow: isFirst,
+              showTotals: isLast,
+              pageNum: p + 1,
+              totalPages: totalPages,
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    // أضف الـ overlay
-    if (!mounted) throw Exception('Widget not mounted');
-    Overlay.of(context).insert(entry);
+      if (!mounted) throw Exception('Widget not mounted');
+      Overlay.of(context).insert(entry);
+      await Future.delayed(const Duration(milliseconds: 350));
+      await WidgetsBinding.instance.endOfFrame;
 
-    // انتظر عدة frames حتى يكتمل الرسم
-    await Future.delayed(const Duration(milliseconds: 400));
-    await WidgetsBinding.instance.endOfFrame;
-
-    try {
-      final boundary =
-          offKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) throw Exception('لم يتم رسم الفاتورة');
-
-      // التقاط بدقة 3× = 2382×~3369 px
-      final img = await boundary.toImage(pixelRatio: 3.0);
-      final byteData =
-          await img.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) throw Exception('فشل تحويل الصورة');
-      completer.complete(byteData.buffer.asUint8List());
-    } catch (e) {
-      completer.completeError(e);
-    } finally {
-      entry.remove();
+      try {
+        final boundary = pageKey.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+        if (boundary == null) throw Exception('صفحة $p لم تُرسم');
+        final img = await boundary.toImage(pixelRatio: 3.0);
+        final bd  = await img.toByteData(format: ui.ImageByteFormat.png);
+        if (bd == null) throw Exception('فشل تحويل صفحة $p');
+        pageImages.add(bd.buffer.asUint8List());
+      } finally {
+        entry.remove();
+      }
     }
 
-    return completer.future;
+    // ── 3. ادمج الصور عمودياً ───────────────────────────────────────────────
+    if (pageImages.length == 1) return pageImages.first;
+    return _mergeImagesVertically(pageImages);
+  }
+
+  /// دمج قائمة صور PNG عمودياً في صورة واحدة
+  Future<Uint8List> _mergeImagesVertically(List<Uint8List> images) async {
+    // فك تشفير كل صورة
+    final List<ui.Image> decoded = [];
+    for (final bytes in images) {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      decoded.add(frame.image);
+    }
+
+    final int w = decoded.first.width;
+    final int totalH = decoded.fold(0, (sum, img) => sum + img.height);
+
+    final recorder = ui.PictureRecorder();
+    final canvas    = Canvas(recorder);
+
+    double dy = 0;
+    for (final img in decoded) {
+      canvas.drawImage(img, Offset(0, dy), Paint());
+      dy += img.height;
+    }
+
+    final picture = recorder.endRecording();
+    final combined = await picture.toImage(w, totalH);
+    final bd = await combined.toByteData(format: ui.ImageByteFormat.png);
+    if (bd == null) throw Exception('فشل دمج الصفحات');
+    return bd.buffer.asUint8List();
   }
 
   // ── تنزيل الصورة على الويب ────────────────────────────────────────────────
@@ -1331,7 +1417,312 @@ class _A4InvoicePage extends StatelessWidget {
   }
 }
 
-// ── Info Card (Bill To / Invoice Details) ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// _A4PageSlice — صفحة A4 واحدة من الفاتورة (للتصدير متعدد الصفحات)
+// كل صفحة: هيدر + شريحة عناصر + (إجماليات في الصفحة الأخيرة) + فوتر
+// ══════════════════════════════════════════════════════════════════════════════
+class _A4PageSlice extends StatelessWidget {
+  final Invoice invoice;
+  final String invNum;
+  final String dateStr;
+  final List<int> itemIndices;   // indices العناصر في هذه الصفحة
+  final bool showInfoRow;        // true → الصفحة الأولى فقط
+  final bool showTotals;         // true → الصفحة الأخيرة فقط
+  final int pageNum;
+  final int totalPages;
+
+  const _A4PageSlice({
+    required this.invoice,
+    required this.invNum,
+    required this.dateStr,
+    required this.itemIndices,
+    required this.showInfoRow,
+    required this.showTotals,
+    required this.pageNum,
+    required this.totalPages,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _kA4W,
+      height: _kA4H,
+      child: Container(
+        width: _kA4W,
+        height: _kA4H,
+        color: Colors.white,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── HEADER (في كل صفحة) ────────────────────────────────────────
+            _buildPageHeader(),
+
+            // ── QUOTE BANNER (الصفحة الأولى فقط) ──────────────────────────
+            if (showInfoRow && invoice.isQuote)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                color: const Color(0xFF7B5EA7),
+                child: const Center(
+                  child: Text('عرض سعر — Price Quotation',
+                      style: TextStyle(color: Colors.white, fontSize: 14,
+                          fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                ),
+              ),
+
+            // ── INFO ROW (الصفحة الأولى فقط) ───────────────────────────────
+            if (showInfoRow) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(40, 20, 40, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _InfoCard(title: 'BILL TO',
+                        accentColor: AppTheme.primaryBlue,
+                        rows: [_FieldRow('Customer', invoice.customerName)])),
+                    const SizedBox(width: 16),
+                    Expanded(child: _InfoCard(title: 'INVOICE DETAILS',
+                        accentColor: const Color(0xFF2E7D32),
+                        rows: [
+                          _FieldRow('Invoice No.', '#$invNum'),
+                          _FieldRow('Date', dateStr),
+                          _FieldRow('Items', '${invoice.items.length} item(s)'),
+                        ])),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ] else
+              const SizedBox(height: 16),
+
+            // ── جدول العناصر (شريحة) ──────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: _buildTableSlice(),
+            ),
+
+            const Spacer(),
+
+            // ── NOTES + TOTALS (الصفحة الأخيرة فقط) ───────────────────────
+            if (showTotals) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (invoice.notes.isNotEmpty)
+                      Expanded(
+                        flex: 3,
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFDE7),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFFECB3)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('NOTES', style: TextStyle(fontSize: 13,
+                                  fontWeight: FontWeight.bold, color: Color(0xFF795548))),
+                              const SizedBox(height: 6),
+                              Text(invoice.notes, style: const TextStyle(
+                                  fontSize: 12, color: Color(0xFF4E342E))),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (invoice.notes.isNotEmpty) const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: _TotalsBox(invoice: invoice),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // ── FOOTER (في كل صفحة) ───────────────────────────────────────
+            _buildPageFooter(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPageHeader() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppTheme.primaryBlueDark, Color(0xFF1B5E20)],
+          begin: Alignment.topLeft,
+          end: Alignment.topRight,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Image.asset('assets/images/company_logo.png',
+              width: 56, height: 56, fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.business_rounded, color: Colors.white, size: 28)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('VINEX TECHNOLOGY',
+                    style: TextStyle(color: Colors.white, fontSize: 20,
+                        fontWeight: FontWeight.bold, letterSpacing: 1.8)),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Icon(Icons.location_on_outlined, size: 10,
+                      color: Colors.white.withValues(alpha: 0.65)),
+                  const SizedBox(width: 4),
+                  Text('Baghdad, Iraq  |  +964 770 000 0000',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 11)),
+                ]),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(invoice.isQuote ? 'QUOTATION' : 'INVOICE',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 11, letterSpacing: 1.5)),
+              Text('#$invNum',
+                  style: const TextStyle(color: Colors.white,
+                      fontSize: 22, fontWeight: FontWeight.bold)),
+              if (totalPages > 1)
+                Text('Page $pageNum / $totalPages',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 10)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTableSlice() {
+    final items = itemIndices.map((i) => invoice.items[i]).toList();
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        children: [
+          // رأس الجدول
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: const BoxDecoration(
+              color: AppTheme.primaryBlue,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
+            ),
+            child: const Row(children: [
+              SizedBox(width: 32, child: Text('#', style: _thStyle, textAlign: TextAlign.center)),
+              Expanded(flex: 5, child: Text('ITEM NAME', style: _thStyle)),
+              SizedBox(width: 60, child: Text('QTY', style: _thStyle, textAlign: TextAlign.center)),
+              SizedBox(width: 110, child: Text('UNIT PRICE', style: _thStyle, textAlign: TextAlign.right)),
+              SizedBox(width: 110, child: Text('AMOUNT', style: _thStyle, textAlign: TextAlign.right)),
+            ]),
+          ),
+          // صفوف العناصر
+          ...items.asMap().entries.map((entry) {
+            final localIdx = entry.key;
+            final globalIdx = itemIndices[localIdx];
+            final item = entry.value;
+            final isEven = globalIdx % 2 == 0;
+            final isLast = localIdx == items.length - 1;
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isEven ? Colors.white : const Color(0xFFF0F4FF),
+                borderRadius: isLast && !showTotals
+                    ? const BorderRadius.vertical(bottom: Radius.circular(7))
+                    : BorderRadius.zero,
+              ),
+              child: Row(children: [
+                SizedBox(width: 32,
+                    child: Container(
+                      width: 22, height: 22,
+                      decoration: const BoxDecoration(
+                          color: AppTheme.primaryBlue, shape: BoxShape.circle),
+                      child: Center(child: Text('${globalIdx + 1}',
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 10, fontWeight: FontWeight.bold))),
+                    )),
+                Expanded(flex: 5, child: Text(item.itemName,
+                    style: const TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.bold, color: Colors.black87))),
+                SizedBox(width: 60, child: Text(
+                    item.quantity == item.quantity.roundToDouble()
+                        ? item.quantity.toInt().toString()
+                        : item.quantity.toStringAsFixed(2),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.bold, color: Colors.black54))),
+                SizedBox(width: 110, child: Text(CurrencyHelper.format(item.unitPrice),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.bold, color: Colors.black54))),
+                SizedBox(width: 110, child: Text(CurrencyHelper.format(item.totalPrice),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.bold, color: Colors.black))),
+              ]),
+            );
+          }),
+          if (showTotals)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(7)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text('${invoice.items.length} items total',
+                      style: const TextStyle(fontSize: 11,
+                          color: AppTheme.textGrey, fontStyle: FontStyle.italic)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPageFooter() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE5E7EB), width: 1)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text('Thank you for your business!',
+              style: TextStyle(fontSize: 11, color: AppTheme.textGrey,
+                  fontStyle: FontStyle.italic)),
+          Text('VINEX TECHNOLOGY © 2025',
+              style: TextStyle(fontSize: 11, color: AppTheme.primaryBlue,
+                  fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
 class _InfoCard extends StatelessWidget {
   final String title;
   final Color accentColor;
