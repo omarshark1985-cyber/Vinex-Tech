@@ -658,81 +658,98 @@ class _InvoicePreviewWidget extends StatelessWidget {
 
   // ── ITEMS TABLE ─────────────────────────────────────────────────────────────
   Widget _buildItemsTable() {
-    const colWidths = [0.05, 0.44, 0.10, 0.205, 0.205]; // fraction of total
-    const headers  = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
-    final aligns   = [
+    const headers = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
+    const aligns  = [
       TextAlign.center,
       TextAlign.left,
       TextAlign.center,
       TextAlign.right,
       TextAlign.right,
     ];
+    const borderSide = BorderSide(color: _pvBorder, width: 0.6);
 
-    Widget headerCell(int i) => Flexible(
-      flex: (colWidths[i] * 1000).toInt(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-        child: Text(headers[i],
-            textAlign: aligns[i],
-            style: const TextStyle(
-                color: Colors.white, fontSize: 10,
-                fontWeight: FontWeight.bold, letterSpacing: 0.4)),
+    // ── Header row cells ──────────────────────────────────────────────────────
+    List<Widget> headerCells = List.generate(headers.length, (i) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+      child: Text(
+        headers[i],
+        textAlign: aligns[i],
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
       ),
-    );
+    ));
 
-    Widget dataCell(String text, int col, bool odd) => Flexible(
-      flex: (colWidths[col] * 1000).toInt(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-        color: odd ? _pvRowEven : Colors.white,
-        child: Text(text,
-            textAlign: aligns[col],
-            style: const TextStyle(fontSize: 10, color: _pvDark)),
-      ),
-    );
+    // ── Data rows ─────────────────────────────────────────────────────────────
+    List<TableRow> dataRows = invoice.items.asMap().entries.map((e) {
+      final item = e.value;
+      final isEven = e.key % 2 == 0; // even index → light-blue tint
+      final qty = item.quantity % 1 == 0
+          ? item.quantity.toInt().toString()
+          : item.quantity.toStringAsFixed(2);
+      final cells = [
+        '${e.key + 1}',
+        item.itemName,
+        qty,
+        CurrencyHelper.format(item.unitPrice),
+        CurrencyHelper.format(item.totalPrice),
+      ];
 
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: _pvBorder, width: 0.5),
-      ),
-      child: Column(
-        children: [
-          // Header row
-          Container(
-            color: _pvBlue,
-            child: Row(children: [
-              for (int i = 0; i < headers.length; i++) headerCell(i),
-            ]),
+      return TableRow(
+        decoration: BoxDecoration(
+          color: isEven ? _pvRowEven : Colors.white,
+        ),
+        children: List.generate(cells.length, (c) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          child: Text(
+            cells[c],
+            textAlign: aligns[c],
+            style: const TextStyle(fontSize: 11, color: _pvDark),
           ),
-          // Data rows
-          ...invoice.items.asMap().entries.map((e) {
-            final item = e.value;
-            final odd  = e.key % 2 == 0; // 0-indexed → first row is "odd" (blue-tint)
-            final qty  = item.quantity % 1 == 0
-                ? item.quantity.toInt().toString()
-                : item.quantity.toStringAsFixed(2);
-            final cells = [
-              '${e.key + 1}',
-              item.itemName,
-              qty,
-              CurrencyHelper.format(item.unitPrice),
-              CurrencyHelper.format(item.totalPrice),
-            ];
-            return Container(
-              decoration: BoxDecoration(
-                border: const Border(
-                    top: BorderSide(color: _pvBorder, width: 0.5)),
-              ),
-              child: Row(children: [
-                for (int c = 0; c < cells.length; c++)
-                  dataCell(cells[c], c, odd),
-              ]),
-            );
-          }),
-        ],
+        )),
+      );
+    }).toList();
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: _pvBorder, width: 0.6),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Table(
+          // ── Column widths ────────────────────────────────────────────────
+          // #: fixed 40px | Item Name: flex (takes remaining space)
+          // QTY: fixed 55px | Unit Price: fixed 125px | Amount: fixed 125px
+          columnWidths: const {
+            0: FixedColumnWidth(40),
+            1: FlexColumnWidth(1),
+            2: FixedColumnWidth(55),
+            3: FixedColumnWidth(125),
+            4: FixedColumnWidth(125),
+          },
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          border: TableBorder(
+            verticalInside: borderSide,
+            horizontalInside: borderSide,
+          ),
+          children: [
+            // ── Header ──────────────────────────────────────────────────────
+            TableRow(
+              decoration: const BoxDecoration(color: _pvBlue),
+              children: headerCells,
+            ),
+            // ── Data rows ───────────────────────────────────────────────────
+            ...dataRows,
+          ],
+        ),
       ),
     );
   }
+
 
   // ── TOTALS ──────────────────────────────────────────────────────────────────
   Widget _buildTotalsRow() {
