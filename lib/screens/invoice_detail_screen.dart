@@ -240,53 +240,12 @@ class InvoicePrintScreen extends StatefulWidget {
 class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   bool _exporting = false;
 
-  // ── Web raster state ────────────────────────────────────────────────────────
-  // On web, PdfPreview cannot render (no PDF plugin). We rasterise the PDF
-  // ourselves using Printing.raster() and show each page as a PNG image.
-  List<Uint8List>? _rasterPages;   // null = loading, [] = error
-  bool _rasterLoading = true;
-  String? _rasterError;
-
   Color get _accentColor => widget.invoice.isQuote
       ? const Color(0xFF7B5EA7)
       : AppTheme.primaryBlueDark;
 
   String get _invNum =>
       widget.invoice.invoiceNumber.toString().padLeft(4, '0');
-
-  @override
-  void initState() {
-    super.initState();
-    if (kIsWeb) {
-      // Kick off rasterisation immediately so preview is ready fast
-      WidgetsBinding.instance.addPostFrameCallback((_) => _rasterize());
-    }
-  }
-
-  // ── Rasterise PDF pages → PNG bytes (web only) ──────────────────────────────
-  Future<void> _rasterize() async {
-    if (!mounted) return;
-    setState(() { _rasterLoading = true; _rasterError = null; });
-    try {
-      final pdfBytes = Uint8List.fromList(
-          await InvoicePdfGenerator.generate(widget.invoice));
-
-      final pages = <Uint8List>[];
-      // dpi 220 → very crisp on retina/HiDPI screens (A4 ≈ 1905 × 2693 px)
-      await for (final page in Printing.raster(pdfBytes, dpi: 220)) {
-        final png = await page.toPng();
-        pages.add(png);
-      }
-      if (mounted) setState(() { _rasterPages = pages; _rasterLoading = false; });
-    } catch (e) {
-      if (kDebugMode) debugPrint('rasterize error: $e');
-      if (mounted) setState(() {
-        _rasterPages = [];
-        _rasterLoading = false;
-        _rasterError = e.toString();
-      });
-    }
-  }
 
   // ── Export PDF ──────────────────────────────────────────────────────────────
   Future<void> _exportPdf() async {
@@ -295,55 +254,41 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     try {
       final bytes = await InvoicePdfGenerator.generate(widget.invoice);
       final fileName = 'Invoice_$_invNum.pdf';
-
       if (kIsWeb) {
-        // Web: trigger browser download via JS
         final b64 = base64Encode(Uint8List.fromList(bytes));
         evalJs("""
           (function(){
             var b64='$b64';
-            var bin=atob(b64);
-            var len=bin.length;
-            var buf=new ArrayBuffer(len);
-            var arr=new Uint8Array(buf);
+            var bin=atob(b64); var len=bin.length;
+            var buf=new ArrayBuffer(len); var arr=new Uint8Array(buf);
             for(var i=0;i<len;i++){ arr[i]=bin.charCodeAt(i); }
             var blob=new Blob([arr],{type:'application/pdf'});
             var url=URL.createObjectURL(blob);
             var a=document.createElement('a');
             a.href=url; a.download='$fileName';
-            document.body.appendChild(a);
-            a.click();
+            document.body.appendChild(a); a.click();
             setTimeout(function(){URL.revokeObjectURL(url);document.body.removeChild(a);},2000);
           })();
         """);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('✅ Downloading $fileName'),
-            backgroundColor: Colors.green.shade700,
-            duration: const Duration(seconds: 3),
-          ));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✅ Downloading $fileName'),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 3),
+        ));
       } else {
-        // Mobile: share/open PDF via system share sheet
         await Printing.sharePdf(
-          bytes: Uint8List.fromList(bytes),
-          filename: fileName,
-        );
+            bytes: Uint8List.fromList(bytes), filename: fileName);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('exportPdf error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('❌ Export failed: $e'),
-          backgroundColor: Colors.red,
-        ));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('❌ Export failed: $e'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
   }
 
-  // ── Print ───────────────────────────────────────────────────────────────────
+  // ── Print (mobile only) ─────────────────────────────────────────────────────
   Future<void> _printPdf() async {
     try {
       await Printing.layoutPdf(
@@ -353,18 +298,12 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
       );
     } catch (e) {
       if (kDebugMode) debugPrint('print error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('❌ Print failed: $e'),
-          backgroundColor: Colors.red,
-        ));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('❌ Print failed: $e'), backgroundColor: Colors.red));
     }
   }
 
-  // ── AppBar actions (shared) ─────────────────────────────────────────────────
   List<Widget> _buildActions() => [
-    // Print button (hidden on web — browser print works via Export PDF)
     if (!kIsWeb)
       Padding(
         padding: const EdgeInsets.only(right: 4),
@@ -372,11 +311,10 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
           onPressed: _printPdf,
           icon: const Icon(Icons.print_rounded, size: 18, color: Colors.white),
           label: const Text('Print',
-              style: TextStyle(color: Colors.white,
-                  fontSize: 12, fontWeight: FontWeight.bold)),
+              style: TextStyle(color: Colors.white, fontSize: 12,
+                  fontWeight: FontWeight.bold)),
         ),
       ),
-    // Export PDF button
     Padding(
       padding: const EdgeInsets.only(right: 10),
       child: ElevatedButton.icon(
@@ -389,8 +327,7 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           backgroundColor: widget.invoice.isQuote
-              ? const Color(0xFF4A148C)
-              : const Color(0xFFB71C1C),
+              ? const Color(0xFF4A148C) : const Color(0xFFB71C1C),
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -401,13 +338,8 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return kIsWeb ? _buildWebPreview(context) : _buildMobilePreview(context);
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // WEB PREVIEW — rasterised PNG pages (Printing.raster)
-  // ══════════════════════════════════════════════════════════════════════════
-  Widget _buildWebPreview(BuildContext context) {
+    final invNum  = _invNum;
+    final dateStr = DateFormat('MMMM dd, yyyy').format(widget.invoice.invoiceDate);
     return Scaffold(
       backgroundColor: const Color(0xFFCFD8DC),
       appBar: AppBar(
@@ -416,147 +348,510 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
         elevation: 0,
         title: Text(
           widget.invoice.isQuote
-              ? 'Preview Quotation  #$_invNum'
-              : 'Preview Invoice  #$_invNum',
+              ? 'Preview Quotation  #$invNum'
+              : 'Preview Invoice  #$invNum',
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
         ),
         actions: _buildActions(),
       ),
-      body: _buildWebBody(),
+      // ── Body: Flutter-widget preview (identical layout to the PDF) ──────────
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: _InvoicePreviewWidget(
+              invoice: widget.invoice,
+              invNum: invNum,
+              dateStr: dateStr,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INVOICE DOCUMENT WIDGET  (shared between view & print)
+// ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// INVOICE PREVIEW WIDGET
+// Pure Flutter widget that exactly mirrors the pw.MultiPage PDF layout.
+// Used as the web preview body (no rasterization needed — instant, crisp).
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Color constants matching InvoicePdfGenerator ─────────────────────────────
+const Color _pvHdrLeft    = Color(0xFF1E3A5F);
+const Color _pvHdrRight   = Color(0xFF1B5E20);
+const Color _pvBlue       = Color(0xFF2563EB);
+const Color _pvGreen      = Color(0xFF2E7D32);
+const Color _pvGreenLight = Color(0xFF43A047);
+const Color _pvBlueLight  = Color(0xFF1A65C0);
+const Color _pvBlueLighter= Color(0xFF1F80E6);
+const Color _pvRed        = Color(0xFFCC0000);
+const Color _pvDark       = Color(0xFF1A1A1A);
+const Color _pvMid        = Color(0xFF555555);
+const Color _pvBorder     = Color(0xFFE0E0E0);
+const Color _pvRowEven    = Color(0xFFF0F4FF);
+const Color _pvNotesBg    = Color(0xFFFFFDE7);
+const Color _pvNotesBdr   = Color(0xFFFFECB3);
+const Color _pvGrey       = Color(0xFF94A3B8);
+const Color _pvYellow     = Color(0xFFFFFF00);
+const Color _pvOrange     = Color(0xFFE65100);
+const Color _pvBrown      = Color(0xFF795548);
+
+class _InvoicePreviewWidget extends StatelessWidget {
+  final Invoice invoice;
+  final String invNum;
+  final String dateStr;
+
+  const _InvoicePreviewWidget({
+    required this.invoice,
+    required this.invNum,
+    required this.dateStr,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── HEADER ─────────────────────────────────────────────────────────
+          _buildHeader(context),
+          // ── BODY ───────────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(32, 20, 32, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Info row
+                _buildInfoRow(),
+                const SizedBox(height: 20),
+                // Items table
+                _buildItemsTable(),
+                const SizedBox(height: 16),
+                // Totals
+                _buildTotalsRow(),
+                // Notes
+                if (invoice.notes.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildNotes(),
+                ],
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+          // ── FOOTER ─────────────────────────────────────────────────────────
+          _buildFooter(),
+        ],
+      ),
     );
   }
 
-  Widget _buildWebBody() {
-    // ── Loading ─────────────────────────────────────────────────────────────
-    if (_rasterLoading) {
-      return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CircularProgressIndicator(color: _accentColor, strokeWidth: 3),
-          const SizedBox(height: 16),
-          Text('Generating PDF preview…',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-        ]),
-      );
-    }
-
-    // ── Error ────────────────────────────────────────────────────────────────
-    if (_rasterError != null || (_rasterPages?.isEmpty ?? true)) {
-      return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.error_outline, size: 48, color: Colors.red),
-          const SizedBox(height: 12),
-          Text('Preview failed — try Export PDF instead',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _rasterize,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Retry'),
-            style: ElevatedButton.styleFrom(backgroundColor: _accentColor,
-                foregroundColor: Colors.white),
-          ),
-        ]),
-      );
-    }
-
-    // ── Pages ────────────────────────────────────────────────────────────────
-    final pages = _rasterPages!;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-      child: Center(
-        child: Column(
-          children: [
-            for (int i = 0; i < pages.length; i++) ...[
-              // Page shadow card
-              Container(
-                // A4 aspect ratio preserved; clamp max width to 900 px
-                constraints: const BoxConstraints(maxWidth: 900),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 16,
-                      spreadRadius: 1,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-                child: Image.memory(
-                  pages[i],
-                  fit: BoxFit.fitWidth,
-                  // isAntiAlias + filterQuality = highest sharpness
-                  isAntiAlias: true,
-                  filterQuality: FilterQuality.high,
+  // ── HEADER ──────────────────────────────────────────────────────────────────
+  Widget _buildHeader(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_pvHdrLeft, _pvHdrRight],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Logo
+          Container(
+            width: 52, height: 52,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/images/company_logo.png',
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Text('VT', style: TextStyle(
+                      color: Colors.white, fontSize: 18,
+                      fontWeight: FontWeight.bold)),
                 ),
               ),
-              // Page number hint between pages
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Text(
-                  'Page ${i + 1} / ${pages.length}',
-                  style: TextStyle(fontSize: 11,
-                      color: Colors.grey.shade600, letterSpacing: 0.4),
+            ),
+          ),
+          const SizedBox(width: 14),
+          // Company info
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('VINEX TECHNOLOGY',
+                    style: TextStyle(
+                      color: Colors.white, fontSize: 18,
+                      fontWeight: FontWeight.bold, letterSpacing: 2,
+                    )),
+                const SizedBox(height: 5),
+                Text(
+                  'Baghdad, Yarmouk — Al-Fakhri 2 Building  |  📞 07803662728',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.8), fontSize: 9),
                 ),
+              ],
+            ),
+          ),
+          // Invoice badge
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  invoice.isQuote ? 'QUOTATION' : 'INVOICE',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 9,
+                      fontWeight: FontWeight.bold, letterSpacing: 2.5),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text('#$invNum',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 20,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── FOOTER ──────────────────────────────────────────────────────────────────
+  Widget _buildFooter() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 11),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: _pvBorder, width: 0.8)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Thank you for your business!',
+              style: TextStyle(fontSize: 10, color: _pvGrey,
+                  fontStyle: FontStyle.italic)),
+          const Text('VINEX TECHNOLOGY © 2025',
+              style: TextStyle(fontSize: 10, color: _pvBlue,
+                  fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  // ── INFO ROW ────────────────────────────────────────────────────────────────
+  Widget _buildInfoRow() {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // BILL TO
+          Expanded(child: _infoCard(
+            title: 'BILL TO',
+            accent: _pvBlue,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Customer', style: TextStyle(
+                    fontSize: 10, fontWeight: FontWeight.bold,
+                    color: _pvMid)),
+                const SizedBox(height: 5),
+                Text(invoice.customerName, style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.bold,
+                    color: _pvRed)),
+              ],
+            ),
+          )),
+          const SizedBox(width: 14),
+          // INVOICE DETAILS
+          Expanded(child: _infoCard(
+            title: 'INVOICE DETAILS',
+            accent: _pvGreen,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _detailRow('Invoice No.', '#$invNum'),
+                _detailRow('Date', dateStr),
+                _detailRow('Items', '${invoice.items.length} item(s)'),
+              ],
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoCard({
+    required String title,
+    required Color accent,
+    required Widget child,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: _pvBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(6),
+                topRight: Radius.circular(6),
+              ),
+            ),
+            child: Text(title, style: const TextStyle(
+                color: Colors.white, fontSize: 10,
+                fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+          ),
+          Padding(padding: const EdgeInsets.all(11), child: child),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(children: [
+        Expanded(child: Text(label, style: const TextStyle(
+            fontSize: 10, fontWeight: FontWeight.bold, color: _pvMid))),
+        Text(value, style: const TextStyle(
+            fontSize: 11, fontWeight: FontWeight.bold, color: _pvRed)),
+      ]),
+    );
+  }
+
+  // ── ITEMS TABLE ─────────────────────────────────────────────────────────────
+  Widget _buildItemsTable() {
+    const colWidths = [0.05, 0.44, 0.10, 0.205, 0.205]; // fraction of total
+    const headers  = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
+    final aligns   = [
+      TextAlign.center,
+      TextAlign.left,
+      TextAlign.center,
+      TextAlign.right,
+      TextAlign.right,
+    ];
+
+    Widget headerCell(int i) => Flexible(
+      flex: (colWidths[i] * 1000).toInt(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        child: Text(headers[i],
+            textAlign: aligns[i],
+            style: const TextStyle(
+                color: Colors.white, fontSize: 10,
+                fontWeight: FontWeight.bold, letterSpacing: 0.4)),
+      ),
+    );
+
+    Widget dataCell(String text, int col, bool odd) => Flexible(
+      flex: (colWidths[col] * 1000).toInt(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        color: odd ? _pvRowEven : Colors.white,
+        child: Text(text,
+            textAlign: aligns[col],
+            style: const TextStyle(fontSize: 10, color: _pvDark)),
+      ),
+    );
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: _pvBorder, width: 0.5),
+      ),
+      child: Column(
+        children: [
+          // Header row
+          Container(
+            color: _pvBlue,
+            child: Row(children: [
+              for (int i = 0; i < headers.length; i++) headerCell(i),
+            ]),
+          ),
+          // Data rows
+          ...invoice.items.asMap().entries.map((e) {
+            final item = e.value;
+            final odd  = e.key % 2 == 0; // 0-indexed → first row is "odd" (blue-tint)
+            final qty  = item.quantity % 1 == 0
+                ? item.quantity.toInt().toString()
+                : item.quantity.toStringAsFixed(2);
+            final cells = [
+              '${e.key + 1}',
+              item.itemName,
+              qty,
+              CurrencyHelper.format(item.unitPrice),
+              CurrencyHelper.format(item.totalPrice),
+            ];
+            return Container(
+              decoration: BoxDecoration(
+                border: const Border(
+                    top: BorderSide(color: _pvBorder, width: 0.5)),
+              ),
+              child: Row(children: [
+                for (int c = 0; c < cells.length; c++)
+                  dataCell(cells[c], c, odd),
+              ]),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── TOTALS ──────────────────────────────────────────────────────────────────
+  Widget _buildTotalsRow() {
+    final hasDiscount = invoice.discount > 0;
+    final hasDP       = invoice.hasDownPayment;
+
+    return Row(children: [
+      const Spacer(),
+      SizedBox(
+        width: 260,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: _pvBorder),
+          ),
+          child: Column(children: [
+            if (hasDiscount) ...[
+              _totalRow('Subtotal',
+                  CurrencyHelper.format(invoice.subtotal),
+                  _pvMid, _pvDark),
+              _totalRow('Discount',
+                  '− ${CurrencyHelper.format(invoice.discount)}',
+                  _pvOrange, _pvOrange),
+              Container(height: 0.8, color: _pvBorder),
+            ],
+            // TOTAL gradient bar
+            Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [_pvGreen, _pvGreenLight],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+                borderRadius: BorderRadius.only(
+                  topLeft:     !hasDiscount ? const Radius.circular(6) : Radius.zero,
+                  topRight:    !hasDiscount ? const Radius.circular(6) : Radius.zero,
+                  bottomLeft:  hasDP ? Radius.zero : const Radius.circular(6),
+                  bottomRight: hasDP ? Radius.zero : const Radius.circular(6),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              child: Row(children: [
+                const Expanded(child: Text('TOTAL AMOUNT',
+                    style: TextStyle(color: Colors.white, fontSize: 11,
+                        fontWeight: FontWeight.bold, letterSpacing: 0.6))),
+                Text(CurrencyHelper.format(invoice.totalAmount),
+                    style: const TextStyle(color: _pvYellow, fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+              ]),
+            ),
+            if (hasDP) ...[
+              _totalRow('Down Payment',
+                  CurrencyHelper.format(invoice.downPayment),
+                  _pvBlueLight, _pvBlueLight, bold: true),
+              // Remaining gradient bar
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [_pvBlueLight, _pvBlueLighter],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(6),
+                    bottomRight: Radius.circular(6),
+                  ),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                child: Row(children: [
+                  const Expanded(child: Text('Remaining Amount',
+                      style: TextStyle(color: Colors.white, fontSize: 11,
+                          fontWeight: FontWeight.bold, letterSpacing: 0.5))),
+                  Text(CurrencyHelper.format(invoice.remainingAmount),
+                      style: const TextStyle(color: _pvYellow, fontSize: 12,
+                          fontWeight: FontWeight.bold)),
+                ]),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // MOBILE PREVIEW — PdfPreview widget (works natively on Android/iOS)
-  // ══════════════════════════════════════════════════════════════════════════
-  Widget _buildMobilePreview(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFCFD8DC),
-      appBar: AppBar(
-        backgroundColor: _accentColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: Text(
-          widget.invoice.isQuote
-              ? 'Preview Quotation  #$_invNum'
-              : 'Preview Invoice  #$_invNum',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-        ),
-        actions: _buildActions(),
-      ),
-      body: PdfPreview(
-        build: (format) => InvoicePdfGenerator.generate(widget.invoice)
-            .then((list) => Uint8List.fromList(list)),
-        maxPageWidth: 900,
-        dpi: 150,
-        allowSharing: false,
-        allowPrinting: false,
-        canChangePageFormat: false,
-        canChangeOrientation: false,
-        canDebug: false,
-        pdfPreviewPageDecoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.30),
-              blurRadius: 14,
-              spreadRadius: 1,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        scrollViewDecoration: const BoxDecoration(color: Color(0xFFCFD8DC)),
-        previewPageMargin:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-        loadingWidget: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            CircularProgressIndicator(color: _accentColor, strokeWidth: 3),
-            const SizedBox(height: 14),
-            Text('Generating PDF preview…',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
           ]),
         ),
       ),
+    ]);
+  }
+
+  Widget _totalRow(String label, String value,
+      Color labelColor, Color valueColor, {bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(children: [
+        Expanded(child: Text(label,
+            style: TextStyle(fontSize: 10, color: labelColor,
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal))),
+        Text(value,
+            style: TextStyle(fontSize: 11, color: valueColor,
+                fontWeight: FontWeight.bold)),
+      ]),
+    );
+  }
+
+  // ── NOTES ───────────────────────────────────────────────────────────────────
+  Widget _buildNotes() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: _pvNotesBg,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: _pvNotesBdr),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('NOTES',
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
+                color: _pvBrown, letterSpacing: 1)),
+        const SizedBox(height: 6),
+        Text(invoice.notes,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold,
+                color: _pvDark, height: 1.5)),
+      ]),
     );
   }
 }
