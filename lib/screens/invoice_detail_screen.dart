@@ -240,12 +240,53 @@ class InvoicePrintScreen extends StatefulWidget {
 class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   bool _exporting = false;
 
+  // ── Web raster state ────────────────────────────────────────────────────────
+  // On web, PdfPreview cannot render (no PDF plugin). We rasterise the PDF
+  // ourselves using Printing.raster() and show each page as a PNG image.
+  List<Uint8List>? _rasterPages;   // null = loading, [] = error
+  bool _rasterLoading = true;
+  String? _rasterError;
+
   Color get _accentColor => widget.invoice.isQuote
       ? const Color(0xFF7B5EA7)
       : AppTheme.primaryBlueDark;
 
   String get _invNum =>
       widget.invoice.invoiceNumber.toString().padLeft(4, '0');
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      // Kick off rasterisation immediately so preview is ready fast
+      WidgetsBinding.instance.addPostFrameCallback((_) => _rasterize());
+    }
+  }
+
+  // ── Rasterise PDF pages → PNG bytes (web only) ──────────────────────────────
+  Future<void> _rasterize() async {
+    if (!mounted) return;
+    setState(() { _rasterLoading = true; _rasterError = null; });
+    try {
+      final pdfBytes = Uint8List.fromList(
+          await InvoicePdfGenerator.generate(widget.invoice));
+
+      final pages = <Uint8List>[];
+      // dpi 220 → very crisp on retina/HiDPI screens (A4 ≈ 1905 × 2693 px)
+      await for (final page in Printing.raster(pdfBytes, dpi: 220)) {
+        final png = await page.toPng();
+        pages.add(png);
+      }
+      if (mounted) setState(() { _rasterPages = pages; _rasterLoading = false; });
+    } catch (e) {
+      if (kDebugMode) debugPrint('rasterize error: $e');
+      if (mounted) setState(() {
+        _rasterPages = [];
+        _rasterLoading = false;
+        _rasterError = e.toString();
+      });
+    }
+  }
 
   // ── Export PDF ──────────────────────────────────────────────────────────────
   Future<void> _exportPdf() async {
@@ -321,8 +362,52 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
     }
   }
 
+  // ── AppBar actions (shared) ─────────────────────────────────────────────────
+  List<Widget> _buildActions() => [
+    // Print button (hidden on web — browser print works via Export PDF)
+    if (!kIsWeb)
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: TextButton.icon(
+          onPressed: _printPdf,
+          icon: const Icon(Icons.print_rounded, size: 18, color: Colors.white),
+          label: const Text('Print',
+              style: TextStyle(color: Colors.white,
+                  fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
+      ),
+    // Export PDF button
+    Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: ElevatedButton.icon(
+        onPressed: _exporting ? null : _exportPdf,
+        icon: _exporting
+            ? const SizedBox(width: 14, height: 14,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+            : const Icon(Icons.picture_as_pdf_rounded, size: 16),
+        label: Text(_exporting ? 'Exporting…' : 'Export PDF',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: widget.invoice.isQuote
+              ? const Color(0xFF4A148C)
+              : const Color(0xFFB71C1C),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
+    return kIsWeb ? _buildWebPreview(context) : _buildMobilePreview(context);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // WEB PREVIEW — rasterised PNG pages (Printing.raster)
+  // ══════════════════════════════════════════════════════════════════════════
+  Widget _buildWebPreview(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFCFD8DC),
       appBar: AppBar(
@@ -335,65 +420,120 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
               : 'Preview Invoice  #$_invNum',
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
         ),
-        actions: [
-          // ── Print button ──────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: TextButton.icon(
-              onPressed: _printPdf,
-              icon: const Icon(Icons.print_rounded, size: 18, color: Colors.white),
-              label: const Text('Print',
-                  style: TextStyle(color: Colors.white,
-                      fontSize: 12, fontWeight: FontWeight.bold)),
-            ),
-          ),
-          // ── Export PDF button ─────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: ElevatedButton.icon(
-              onPressed: _exporting ? null : _exportPdf,
-              icon: _exporting
-                  ? const SizedBox(
-                      width: 14, height: 14,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.picture_as_pdf_rounded, size: 16),
-              label: Text(
-                _exporting ? 'Exporting…' : 'Export PDF',
-                style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: widget.invoice.isQuote
-                    ? const Color(0xFF4A148C)
-                    : const Color(0xFFB71C1C),
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ],
+        actions: _buildActions(),
       ),
+      body: _buildWebBody(),
+    );
+  }
 
-      // ── PdfPreview — multi-page, very high quality ──────────────────────────
+  Widget _buildWebBody() {
+    // ── Loading ─────────────────────────────────────────────────────────────
+    if (_rasterLoading) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          CircularProgressIndicator(color: _accentColor, strokeWidth: 3),
+          const SizedBox(height: 16),
+          Text('Generating PDF preview…',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+        ]),
+      );
+    }
+
+    // ── Error ────────────────────────────────────────────────────────────────
+    if (_rasterError != null || (_rasterPages?.isEmpty ?? true)) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.error_outline, size: 48, color: Colors.red),
+          const SizedBox(height: 12),
+          Text('Preview failed — try Export PDF instead',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _rasterize,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Retry'),
+            style: ElevatedButton.styleFrom(backgroundColor: _accentColor,
+                foregroundColor: Colors.white),
+          ),
+        ]),
+      );
+    }
+
+    // ── Pages ────────────────────────────────────────────────────────────────
+    final pages = _rasterPages!;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+      child: Center(
+        child: Column(
+          children: [
+            for (int i = 0; i < pages.length; i++) ...[
+              // Page shadow card
+              Container(
+                // A4 aspect ratio preserved; clamp max width to 900 px
+                constraints: const BoxConstraints(maxWidth: 900),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Image.memory(
+                  pages[i],
+                  fit: BoxFit.fitWidth,
+                  // isAntiAlias + filterQuality = highest sharpness
+                  isAntiAlias: true,
+                  filterQuality: FilterQuality.high,
+                ),
+              ),
+              // Page number hint between pages
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Text(
+                  'Page ${i + 1} / ${pages.length}',
+                  style: TextStyle(fontSize: 11,
+                      color: Colors.grey.shade600, letterSpacing: 0.4),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MOBILE PREVIEW — PdfPreview widget (works natively on Android/iOS)
+  // ══════════════════════════════════════════════════════════════════════════
+  Widget _buildMobilePreview(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFCFD8DC),
+      appBar: AppBar(
+        backgroundColor: _accentColor,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          widget.invoice.isQuote
+              ? 'Preview Quotation  #$_invNum'
+              : 'Preview Invoice  #$_invNum',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+        ),
+        actions: _buildActions(),
+      ),
       body: PdfPreview(
-        // Build PDF bytes from our generator (pw.MultiPage → multi-page)
         build: (format) => InvoicePdfGenerator.generate(widget.invoice)
             .then((list) => Uint8List.fromList(list)),
-        // Display at up to 900 logical pixels wide (fills most screens beautifully)
         maxPageWidth: 900,
-        // Use high DPI for crisp text and graphics
         dpi: 150,
-        // Show the built-in PdfPreview toolbar (zoom, share, print)
         allowSharing: false,
         allowPrinting: false,
         canChangePageFormat: false,
         canChangeOrientation: false,
         canDebug: false,
-        // Styling
         pdfPreviewPageDecoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [
@@ -405,23 +545,16 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
             ),
           ],
         ),
-        scrollViewDecoration: const BoxDecoration(
-          color: Color(0xFFCFD8DC),
-        ),
-        previewPageMargin: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 20),
+        scrollViewDecoration: const BoxDecoration(color: Color(0xFFCFD8DC)),
+        previewPageMargin:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
         loadingWidget: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(
-                  color: _accentColor, strokeWidth: 3),
-              const SizedBox(height: 14),
-              Text('Generating PDF preview…',
-                  style: TextStyle(
-                      fontSize: 13, color: Colors.grey.shade600)),
-            ],
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CircularProgressIndicator(color: _accentColor, strokeWidth: 3),
+            const SizedBox(height: 14),
+            Text('Generating PDF preview…',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+          ]),
         ),
       ),
     );
