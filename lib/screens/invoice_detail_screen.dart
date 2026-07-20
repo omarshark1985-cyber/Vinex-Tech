@@ -354,34 +354,19 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
         ),
         actions: _buildActions(),
       ),
-      // ── Body: Flutter-widget preview (identical layout to the PDF) ──────────
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: _InvoicePreviewWidget(
-              invoice: widget.invoice,
-              invNum: invNum,
-              dateStr: dateStr,
-            ),
-          ),
-        ),
+      // ── Body: multi-page A4 preview ──────────────────────────────────────
+      body: _A4PreviewPages(
+        invoice: widget.invoice,
+        invNum: invNum,
+        dateStr: dateStr,
       ),
     );
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// INVOICE DOCUMENT WIDGET  (shared between view & print)
+// COLOR CONSTANTS  (shared by all preview widgets)
 // ══════════════════════════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════════════════════
-// INVOICE PREVIEW WIDGET
-// Pure Flutter widget that exactly mirrors the pw.MultiPage PDF layout.
-// Used as the web preview body (no rasterization needed — instant, crisp).
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Color constants matching InvoicePdfGenerator ─────────────────────────────
 const Color _pvHdrLeft    = Color(0xFF1E3A5F);
 const Color _pvHdrRight   = Color(0xFF1B5E20);
 const Color _pvBlue       = Color(0xFF2563EB);
@@ -401,70 +386,208 @@ const Color _pvYellow     = Color(0xFFFFFF00);
 const Color _pvOrange     = Color(0xFFE65100);
 const Color _pvBrown      = Color(0xFF795548);
 
-class _InvoicePreviewWidget extends StatelessWidget {
-  final Invoice invoice;
-  final String invNum;
-  final String dateStr;
+// ══════════════════════════════════════════════════════════════════════════════
+// A4 PAGE DIMENSIONS  (96 dpi — matches print/PDF layout)
+// ══════════════════════════════════════════════════════════════════════════════
+//  A4 physical: 210 × 297 mm
+//  At 96 dpi  : 794 × 1123 px  → we use 794 wide, displayed scaled to fit screen
+const double _a4W = 794;   // A4 width  in logical pixels
+const double _a4H = 1123;  // A4 height in logical pixels
 
-  const _InvoicePreviewWidget({
+// Fixed heights (pixels) for layout budget calculations
+const double _hdrH        = 86.0;   // gradient header
+const double _infoRowH    = 90.0;   // BILL TO + INVOICE DETAILS cards
+const double _footerH     = 38.0;   // footer bar
+const double _bodyPadV    = 20.0;   // top padding of body section (first page)
+const double _bodyPadVCont= 16.0;   // top padding on continuation pages
+const double _sectionGap  = 20.0;   // gap between sections
+const double _tableRowH   = 37.0;   // each data row in the items table
+const double _tableHdrH   = 36.0;   // table header row
+const double _totalsH     = 56.0;   // totals block base height (no discount, no dp)
+const double _discountRow = 30.0;   // extra row for discount
+const double _dpRows      = 60.0;   // extra rows for down payment + remaining
+const double _notesH      = 72.0;   // approximate notes block
+const double _bodyPadBott = 20.0;   // bottom padding before footer
+
+// ══════════════════════════════════════════════════════════════════════════════
+// _A4PreviewPages  — paginates items across multiple A4 pages
+// ══════════════════════════════════════════════════════════════════════════════
+class _A4PreviewPages extends StatelessWidget {
+  final Invoice invoice;
+  final String  invNum;
+  final String  dateStr;
+
+  const _A4PreviewPages({
     required this.invoice,
     required this.invNum,
     required this.dateStr,
   });
 
+  // ── Calculate how many rows fit on page 1 vs continuation pages ─────────────
+  _PaginationResult _paginate() {
+    final hasDiscount = invoice.discount > 0;
+    final hasDP       = invoice.hasDownPayment;
+
+    // Usable body height on page 1
+    //  = A4H − header − bodyPadV − infoRow − sectionGap − tableHdr − gap(16) − totals − notes? − footer − bodyPadBott
+    double totalsHeight = _totalsH
+        + (hasDiscount ? _discountRow : 0)
+        + (hasDP       ? _dpRows      : 0);
+    double notesHeight  = invoice.notes.isNotEmpty ? _notesH + 12 : 0;
+
+    double usablePage1 = _a4H
+        - _hdrH
+        - _bodyPadV
+        - _infoRowH
+        - _sectionGap
+        - _tableHdrH
+        - 16          // gap after table
+        - totalsHeight
+        - notesHeight
+        - _bodyPadBott
+        - _footerH;
+
+    // How many rows fit on page 1?
+    int rowsPage1 = (usablePage1 / _tableRowH).floor().clamp(1, invoice.items.length);
+
+    // Usable body height on continuation pages
+    //  = A4H − contHeader − bodyPadVCont − tableHdr − gap(16) − totals(last page) − notes(last page) − footer − bodyPadBott
+    // For non-last continuation pages the totals/notes don't appear
+    double usableContFull = _a4H
+        - 52          // continuation mini-header height
+        - _bodyPadVCont
+        - _tableHdrH
+        - 16
+        - _bodyPadBott
+        - _footerH;
+
+    int rowsContFull = (usableContFull / _tableRowH).floor().clamp(1, 9999);
+
+    // Split items into pages
+    List<List<InvoiceItem>> pages = [];
+    int start = 0;
+
+    // Page 1
+    int end1 = (start + rowsPage1).clamp(0, invoice.items.length);
+    pages.add(invoice.items.sublist(start, end1));
+    start = end1;
+
+    // Continuation pages
+    while (start < invoice.items.length) {
+      // Last page: reserve space for totals + notes
+      double usableContLast = _a4H
+          - 52
+          - _bodyPadVCont
+          - _tableHdrH
+          - 16
+          - totalsHeight
+          - notesHeight
+          - _bodyPadBott
+          - _footerH;
+      int rowsContLast = (usableContLast / _tableRowH).floor().clamp(1, 9999);
+
+      bool isLastChunk = (start + rowsContLast) >= invoice.items.length;
+      int rowsThisPage = isLastChunk ? rowsContLast : rowsContFull;
+      int endN = (start + rowsThisPage).clamp(0, invoice.items.length);
+      pages.add(invoice.items.sublist(start, endN));
+      start = endN;
+    }
+
+    return _PaginationResult(pages: pages, totalPages: pages.length);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 20,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── HEADER ─────────────────────────────────────────────────────────
-          _buildHeader(context),
-          // ── BODY ───────────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(32, 20, 32, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Info row
-                _buildInfoRow(),
+    final result     = _paginate();
+    final totalPages = result.totalPages;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+      child: Center(
+        child: Column(
+          children: [
+            for (int p = 0; p < totalPages; p++) ...[
+              // ── Drop-shadow A4 page wrapper ─────────────────────────────
+              Container(
+                width: _a4W,
+                // Fix exact A4 height so every page is the same size
+                height: _a4H,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 18,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: _A4Page(
+                  invoice:     invoice,
+                  invNum:      invNum,
+                  dateStr:     dateStr,
+                  items:       result.pages[p],
+                  pageIndex:   p,
+                  totalPages:  totalPages,
+                  globalOffset: result.pages
+                      .sublist(0, p)
+                      .fold(0, (s, pg) => s + pg.length),
+                  showTotals:  p == totalPages - 1,
+                  showNotes:   p == totalPages - 1 && invoice.notes.isNotEmpty,
+                  showInfoRow: p == 0,
+                ),
+              ),
+              // ── Gap between pages ───────────────────────────────────────
+              if (p < totalPages - 1)
                 const SizedBox(height: 20),
-                // Items table
-                _buildItemsTable(),
-                const SizedBox(height: 16),
-                // Totals
-                _buildTotalsRow(),
-                // Notes
-                if (invoice.notes.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _buildNotes(),
-                ],
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-          // ── FOOTER ─────────────────────────────────────────────────────────
-          _buildFooter(),
-        ],
+            ],
+          ],
+        ),
       ),
     );
   }
+}
 
-  // ── HEADER ──────────────────────────────────────────────────────────────────
-  Widget _buildHeader(BuildContext context) {
+// ── Simple result holder ─────────────────────────────────────────────────────
+class _PaginationResult {
+  final List<List<InvoiceItem>> pages;
+  final int totalPages;
+  const _PaginationResult({required this.pages, required this.totalPages});
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// _A4Page  — renders one A4 page of the preview
+// ══════════════════════════════════════════════════════════════════════════════
+class _A4Page extends StatelessWidget {
+  final Invoice         invoice;
+  final String          invNum;
+  final String          dateStr;
+  final List<InvoiceItem> items;
+  final int             pageIndex;
+  final int             totalPages;
+  final int             globalOffset;  // item-index offset for row numbering
+  final bool            showTotals;
+  final bool            showNotes;
+  final bool            showInfoRow;
+
+  const _A4Page({
+    required this.invoice,
+    required this.invNum,
+    required this.dateStr,
+    required this.items,
+    required this.pageIndex,
+    required this.totalPages,
+    required this.globalOffset,
+    required this.showTotals,
+    required this.showNotes,
+    required this.showInfoRow,
+  });
+
+  // ── HEADER (full — page 1) ────────────────────────────────────────────────
+  Widget _buildHeader() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           colors: [_pvHdrLeft, _pvHdrRight],
@@ -477,7 +600,7 @@ class _InvoicePreviewWidget extends StatelessWidget {
         children: [
           // Logo
           Container(
-            width: 52, height: 52,
+            width: 50, height: 50,
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(9),
@@ -490,7 +613,7 @@ class _InvoicePreviewWidget extends StatelessWidget {
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) => const Center(
                   child: Text('VT', style: TextStyle(
-                      color: Colors.white, fontSize: 18,
+                      color: Colors.white, fontSize: 17,
                       fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -504,10 +627,10 @@ class _InvoicePreviewWidget extends StatelessWidget {
               children: [
                 const Text('VINEX TECHNOLOGY',
                     style: TextStyle(
-                      color: Colors.white, fontSize: 18,
+                      color: Colors.white, fontSize: 17,
                       fontWeight: FontWeight.bold, letterSpacing: 2,
                     )),
-                const SizedBox(height: 5),
+                const SizedBox(height: 4),
                 Text(
                   'Baghdad, Yarmouk — Al-Fakhri 2 Building  |  📞 07803662728',
                   style: TextStyle(
@@ -546,11 +669,41 @@ class _InvoicePreviewWidget extends StatelessWidget {
     );
   }
 
-  // ── FOOTER ──────────────────────────────────────────────────────────────────
+  // ── CONTINUATION MINI-HEADER (pages 2+) ──────────────────────────────────
+  Widget _buildContHeader() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_pvHdrLeft, _pvHdrRight],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+      ),
+      child: Row(
+        children: [
+          const Text('VINEX TECHNOLOGY',
+              style: TextStyle(
+                  color: Colors.white, fontSize: 13,
+                  fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+          const Spacer(),
+          Text(
+            '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum  —  Continued (Page ${pageIndex + 1} / $totalPages)',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.85), fontSize: 9,
+                fontWeight: FontWeight.bold, letterSpacing: 0.5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── FOOTER ───────────────────────────────────────────────────────────────
   Widget _buildFooter() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: _pvBorder, width: 0.8)),
       ),
@@ -558,19 +711,24 @@ class _InvoicePreviewWidget extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text('Thank you for your business!',
-              style: TextStyle(fontSize: 10, color: _pvGrey,
+              style: const TextStyle(fontSize: 9, color: _pvGrey,
                   fontStyle: FontStyle.italic)),
+          Text(
+            'Page ${pageIndex + 1} of $totalPages',
+            style: const TextStyle(fontSize: 9, color: _pvMid),
+          ),
           const Text('VINEX TECHNOLOGY © 2025',
-              style: TextStyle(fontSize: 10, color: _pvBlue,
+              style: TextStyle(fontSize: 9, color: _pvBlue,
                   fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  // ── INFO ROW ────────────────────────────────────────────────────────────────
+  // ── INFO ROW (BILL TO + INVOICE DETAILS) ─────────────────────────────────
   Widget _buildInfoRow() {
-    return IntrinsicHeight(
+    return SizedBox(
+      height: _infoRowH,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -582,12 +740,10 @@ class _InvoicePreviewWidget extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Customer', style: TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.bold,
-                    color: _pvMid)),
-                const SizedBox(height: 5),
+                    fontSize: 10, fontWeight: FontWeight.bold, color: _pvMid)),
+                const SizedBox(height: 4),
                 Text(invoice.customerName, style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.bold,
-                    color: _pvRed)),
+                    fontSize: 13, fontWeight: FontWeight.bold, color: _pvRed)),
               ],
             ),
           )),
@@ -612,7 +768,7 @@ class _InvoicePreviewWidget extends StatelessWidget {
 
   Widget _infoCard({
     required String title,
-    required Color accent,
+    required Color  accent,
     required Widget child,
   }) {
     return Container(
@@ -630,15 +786,14 @@ class _InvoicePreviewWidget extends StatelessWidget {
             decoration: BoxDecoration(
               color: accent,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(6),
-                topRight: Radius.circular(6),
+                topLeft: Radius.circular(6), topRight: Radius.circular(6),
               ),
             ),
             child: Text(title, style: const TextStyle(
                 color: Colors.white, fontSize: 10,
                 fontWeight: FontWeight.bold, letterSpacing: 1.2)),
           ),
-          Padding(padding: const EdgeInsets.all(11), child: child),
+          Padding(padding: const EdgeInsets.all(10), child: child),
         ],
       ),
     );
@@ -646,52 +801,50 @@ class _InvoicePreviewWidget extends StatelessWidget {
 
   Widget _detailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Row(children: [
         Expanded(child: Text(label, style: const TextStyle(
             fontSize: 10, fontWeight: FontWeight.bold, color: _pvMid))),
         Text(value, style: const TextStyle(
-            fontSize: 11, fontWeight: FontWeight.bold, color: _pvRed)),
+            fontSize: 10, fontWeight: FontWeight.bold, color: _pvRed)),
       ]),
     );
   }
 
-  // ── ITEMS TABLE ─────────────────────────────────────────────────────────────
+  // ── ITEMS TABLE (this page's rows only) ───────────────────────────────────
   Widget _buildItemsTable() {
     const headers = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
     const aligns  = [
-      TextAlign.center,
-      TextAlign.left,
-      TextAlign.center,
-      TextAlign.right,
-      TextAlign.right,
+      TextAlign.center, TextAlign.left, TextAlign.center,
+      TextAlign.right,  TextAlign.right,
     ];
     const borderSide = BorderSide(color: _pvBorder, width: 0.6);
 
-    // ── Header row cells ──────────────────────────────────────────────────────
     List<Widget> headerCells = List.generate(headers.length, (i) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-      child: Text(
-        headers[i],
-        textAlign: aligns[i],
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-        ),
+      height: _tableHdrH,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Align(
+        alignment: aligns[i] == TextAlign.left
+            ? Alignment.centerLeft
+            : aligns[i] == TextAlign.center
+                ? Alignment.center
+                : Alignment.centerRight,
+        child: Text(headers[i],
+            style: const TextStyle(
+              color: Colors.white, fontSize: 11,
+              fontWeight: FontWeight.bold, letterSpacing: 0.5)),
       ),
     ));
 
-    // ── Data rows ─────────────────────────────────────────────────────────────
-    List<TableRow> dataRows = invoice.items.asMap().entries.map((e) {
-      final item = e.value;
-      final isEven = e.key % 2 == 0; // even index → light-blue tint
-      final qty = item.quantity % 1 == 0
+    List<TableRow> dataRows = items.asMap().entries.map((e) {
+      final globalIdx = globalOffset + e.key;
+      final item      = e.value;
+      final isEven    = globalIdx % 2 == 0;
+      final qty       = item.quantity % 1 == 0
           ? item.quantity.toInt().toString()
           : item.quantity.toStringAsFixed(2);
       final cells = [
-        '${e.key + 1}',
+        '${globalIdx + 1}',
         item.itemName,
         qty,
         CurrencyHelper.format(item.unitPrice),
@@ -699,15 +852,20 @@ class _InvoicePreviewWidget extends StatelessWidget {
       ];
 
       return TableRow(
-        decoration: BoxDecoration(
-          color: isEven ? _pvRowEven : Colors.white,
-        ),
-        children: List.generate(cells.length, (c) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-          child: Text(
-            cells[c],
-            textAlign: aligns[c],
-            style: const TextStyle(fontSize: 11, color: _pvDark),
+        decoration: BoxDecoration(color: isEven ? _pvRowEven : Colors.white),
+        children: List.generate(cells.length, (c) => SizedBox(
+          height: _tableRowH,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Align(
+              alignment: aligns[c] == TextAlign.left
+                  ? Alignment.centerLeft
+                  : aligns[c] == TextAlign.center
+                      ? Alignment.center
+                      : Alignment.centerRight,
+              child: Text(cells[c],
+                  style: const TextStyle(fontSize: 11, color: _pvDark)),
+            ),
           ),
         )),
       );
@@ -721,9 +879,6 @@ class _InvoicePreviewWidget extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
         ),
         child: Table(
-          // ── Column widths ────────────────────────────────────────────────
-          // #: fixed 40px | Item Name: flex (takes remaining space)
-          // QTY: fixed 55px | Unit Price: fixed 125px | Amount: fixed 125px
           columnWidths: const {
             0: FixedColumnWidth(40),
             1: FlexColumnWidth(1),
@@ -737,12 +892,10 @@ class _InvoicePreviewWidget extends StatelessWidget {
             horizontalInside: borderSide,
           ),
           children: [
-            // ── Header ──────────────────────────────────────────────────────
             TableRow(
               decoration: const BoxDecoration(color: _pvBlue),
               children: headerCells,
             ),
-            // ── Data rows ───────────────────────────────────────────────────
             ...dataRows,
           ],
         ),
@@ -750,16 +903,15 @@ class _InvoicePreviewWidget extends StatelessWidget {
     );
   }
 
-
-  // ── TOTALS ──────────────────────────────────────────────────────────────────
+  // ── TOTALS ────────────────────────────────────────────────────────────────
   Widget _buildTotalsRow() {
     final hasDiscount = invoice.discount > 0;
     final hasDP       = invoice.hasDownPayment;
 
-    return Row(children: [
-      const Spacer(),
-      SizedBox(
-        width: 260,
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: 280,
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -769,14 +921,12 @@ class _InvoicePreviewWidget extends StatelessWidget {
           child: Column(children: [
             if (hasDiscount) ...[
               _totalRow('Subtotal',
-                  CurrencyHelper.format(invoice.subtotal),
-                  _pvMid, _pvDark),
+                  CurrencyHelper.format(invoice.subtotal), _pvMid, _pvDark),
               _totalRow('Discount',
                   '− ${CurrencyHelper.format(invoice.discount)}',
                   _pvOrange, _pvOrange),
               Container(height: 0.8, color: _pvBorder),
             ],
-            // TOTAL gradient bar
             Container(
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
@@ -805,7 +955,6 @@ class _InvoicePreviewWidget extends StatelessWidget {
               _totalRow('Down Payment',
                   CurrencyHelper.format(invoice.downPayment),
                   _pvBlueLight, _pvBlueLight, bold: true),
-              // Remaining gradient bar
               Container(
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
@@ -832,7 +981,7 @@ class _InvoicePreviewWidget extends StatelessWidget {
           ]),
         ),
       ),
-    ]);
+    );
   }
 
   Widget _totalRow(String label, String value,
@@ -850,11 +999,11 @@ class _InvoicePreviewWidget extends StatelessWidget {
     );
   }
 
-  // ── NOTES ───────────────────────────────────────────────────────────────────
+  // ── NOTES ────────────────────────────────────────────────────────────────
   Widget _buildNotes() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(13),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _pvNotesBg,
         borderRadius: BorderRadius.circular(7),
@@ -864,14 +1013,62 @@ class _InvoicePreviewWidget extends StatelessWidget {
         const Text('NOTES',
             style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
                 color: _pvBrown, letterSpacing: 1)),
-        const SizedBox(height: 6),
+        const SizedBox(height: 5),
         Text(invoice.notes,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold,
-                color: _pvDark, height: 1.5)),
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold,
+                color: _pvDark, height: 1.4)),
       ]),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Header ─────────────────────────────────────────────────────────
+        pageIndex == 0 ? _buildHeader() : _buildContHeader(),
+
+        // ── Body ───────────────────────────────────────────────────────────
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              32,
+              pageIndex == 0 ? _bodyPadV : _bodyPadVCont,
+              32,
+              _bodyPadBott,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Info row (page 1 only)
+                if (showInfoRow) ...[
+                  _buildInfoRow(),
+                  const SizedBox(height: 20),
+                ],
+                // Items table
+                _buildItemsTable(),
+                // Totals + notes (last page only)
+                if (showTotals) ...[
+                  const SizedBox(height: 16),
+                  _buildTotalsRow(),
+                ],
+                if (showNotes) ...[
+                  const SizedBox(height: 12),
+                  _buildNotes(),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        // ── Footer ─────────────────────────────────────────────────────────
+        _buildFooter(),
+      ],
+    );
+  }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INVOICE DOCUMENT WIDGET  (shared between view & print)
