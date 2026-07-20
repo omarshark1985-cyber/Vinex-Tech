@@ -501,28 +501,46 @@ class _A4PreviewPages extends StatelessWidget {
     final result     = _paginate();
     final totalPages = result.totalPages;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-      child: Center(
-        child: Column(
-          children: [
-            for (int p = 0; p < totalPages; p++) ...[
-              // ── Drop-shadow A4 page wrapper ─────────────────────────────
-              Container(
-                width: _a4W,
-                // Fix exact A4 height so every page is the same size
-                height: _a4H,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: _A4Page(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Scale the 794px-wide A4 page to fit the available screen width
+        // keeping the exact A4 aspect ratio (794 : 1123)
+        final screenW   = constraints.maxWidth == double.infinity
+            ? 794.0
+            : constraints.maxWidth;
+        final pageW     = screenW.clamp(0.0, _a4W);       // never wider than real A4
+        final scale     = pageW / _a4W;
+        final pageH     = _a4H * scale;
+        final hPad      = ((screenW - pageW) / 2).clamp(0.0, 20.0);
+
+        return SingleChildScrollView(
+          padding: EdgeInsets.symmetric(vertical: 24, horizontal: hPad),
+          child: Center(
+            child: Column(
+              children: [
+                for (int p = 0; p < totalPages; p++) ...[
+                  // ── Drop-shadow A4 page wrapper (exact A4 ratio) ────────
+                  SizedBox(
+                    width:  pageW,
+                    height: pageH,
+                    child: Transform.scale(
+                      scale: scale,
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width:  _a4W,
+                        height: _a4H,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.28),
+                                blurRadius: 18,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: _A4Page(
                   invoice:     invoice,
                   invNum:      invNum,
                   dateStr:     dateStr,
@@ -536,14 +554,19 @@ class _A4PreviewPages extends StatelessWidget {
                   showNotes:   p == totalPages - 1 && invoice.notes.isNotEmpty,
                   showInfoRow: p == 0,
                 ),
-              ),
-              // ── Gap between pages ───────────────────────────────────────
-              if (p < totalPages - 1)
-                const SizedBox(height: 20),
-            ],
-          ],
-        ),
-      ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // ── Gap between pages ─────────────────────────────────────
+                  if (p < totalPages - 1)
+                    SizedBox(height: 20 * scale),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -864,7 +887,7 @@ class _A4Page extends StatelessWidget {
                       ? Alignment.center
                       : Alignment.centerRight,
               child: Text(cells[c],
-                  style: const TextStyle(fontSize: 11, color: _pvDark)),
+                  style: const TextStyle(fontSize: 11, color: _pvDark, fontWeight: FontWeight.bold)),
             ),
           ),
         )),

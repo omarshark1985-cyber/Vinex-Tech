@@ -7,7 +7,7 @@ class CurrencyHelper {
     final intVal = amount.toInt();
     // Add thousand separators
     final formatted = _addThousandSeparators(intVal);
-    return 'IQD $formatted';
+    return '$formatted IQD';
   }
 
   static String _addThousandSeparators(int value) {
