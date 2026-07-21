@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/invoice_model.dart';
+import '../models/invoice_item_model.dart';
 import '../utils/currency_helper.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -100,6 +101,19 @@ class InvoicePdfGenerator {
     final dateStr = DateFormat('MMMM dd, yyyy').format(invoice.invoiceDate);
 
     final pdf = pw.Document(compress: true);
+
+    // ── Orphan-totals guard (mirrors _paginate() in invoice_detail_screen.dart)
+    // Keep the last 2 items together with the totals/notes block using
+    // pw.KeepTogether, so the totals never floats alone on a fresh page.
+    final allItems  = invoice.items;
+    final keepCount = allItems.length >= 2 ? 2 : allItems.length; // rows kept with totals
+    final headItems = allItems.length > keepCount
+        ? allItems.sublist(0, allItems.length - keepCount)
+        : <InvoiceItem>[];
+    final tailItems = allItems.length > keepCount
+        ? allItems.sublist(allItems.length - keepCount)
+        : allItems;
+
     pdf.addPage(pw.MultiPage(
       pageTheme: pw.PageTheme(
         pageFormat: PdfPageFormat.a4,
@@ -109,27 +123,34 @@ class InvoicePdfGenerator {
       header: (ctx) => _buildHeader(logo, invNum, invoice, ctx),
       footer: (ctx) => _buildFooter(ctx),
       build:  (ctx) => [
+        // ── Info row (page 1) ──────────────────────────────────────────────
         pw.Padding(
           padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
           child: _buildInfoRow(invoice, invNum, dateStr),
         ),
         pw.SizedBox(height: _sectionGap),
-        pw.Padding(
-          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
-          child: _buildItemsTable(invoice),
-        ),
-        pw.SizedBox(height: 16 * _s),
-        pw.Padding(
-          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
-          child: _buildTotalsRow(invoice),
-        ),
-        if (invoice.notes.isNotEmpty) ...[
-          pw.SizedBox(height: 12 * _s),
+        // ── Head rows (all items except last keepCount) ────────────────────
+        if (headItems.isNotEmpty)
           pw.Padding(
             padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
-            child: _buildNotes(invoice.notes),
+            child: _buildItemsTable(headItems, isHead: true),
           ),
-        ],
+        // ── Tail rows + totals + notes: kept together on same page ─────────
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+          child: pw.Container(
+            child: pw.Column(children: [
+              _buildItemsTable(tailItems,
+                  isHead: headItems.isEmpty, globalOffset: headItems.length),
+              pw.SizedBox(height: 16 * _s),
+              _buildTotalsRow(invoice),
+              if (invoice.notes.isNotEmpty) ...[
+                pw.SizedBox(height: 12 * _s),
+                _buildNotes(invoice.notes),
+              ],
+            ]),
+          ),
+        ),
         pw.SizedBox(height: _bdPadBot),
       ],
     ));
@@ -365,8 +386,16 @@ class InvoicePdfGenerator {
 
   // ══════════════════════════════════════════════════════════════════════════
   // ITEMS TABLE  — exact column widths, row heights, bold cells, IQD-suffix
+  // [items]        — subset of items to render (head or tail slice)
+  // [isHead]       — true  → include the blue header row
+  //                  false → omit header row (continuation slice)
+  // [globalOffset] — row-number offset so "#" column continues correctly
   // ══════════════════════════════════════════════════════════════════════════
-  static pw.Widget _buildItemsTable(Invoice invoice) {
+  static pw.Widget _buildItemsTable(
+    List<InvoiceItem> items, {
+    bool isHead = true,
+    int  globalOffset = 0,
+  }) {
     const headers  = ['#', 'ITEM NAME', 'QTY', 'UNIT PRICE', 'AMOUNT'];
     final hAligns  = [
       pw.Alignment.center,
@@ -389,15 +418,17 @@ class InvoicePdfGenerator {
     );
 
     // ── Data rows ─────────────────────────────────────────────────────────
-    final dataRows = invoice.items.asMap().entries.map((e) {
+    final dataRows = items.asMap().entries.map((e) {
       final idx    = e.key;
       final item   = e.value;
-      final isEven = idx % 2 == 0;
+      // Global row index for alternating color and # number
+      final gIdx   = globalOffset + idx;
+      final isEven = gIdx % 2 == 0;
       final qty    = item.quantity % 1 == 0
           ? item.quantity.toInt().toString()
           : item.quantity.toStringAsFixed(2);
       final cells  = [
-        '${idx + 1}',
+        '${gIdx + 1}',
         item.itemName,
         qty,
         CurrencyHelper.format(item.unitPrice),
@@ -411,7 +442,6 @@ class InvoicePdfGenerator {
           child: pw.Align(
             alignment: hAligns[c],
             child: pw.Text(cells[c],
-                // ← Bold, exactly matching Flutter widget
                 style: pw.TextStyle(fontSize: 11, color: _dark,
                     fontWeight: pw.FontWeight.bold)),
           ),
@@ -441,10 +471,11 @@ class InvoicePdfGenerator {
             horizontalInside: bSide,
           ),
           children: [
-            pw.TableRow(
-              decoration: const pw.BoxDecoration(color: _blue),
-              children: List.generate(5, hdrCell),
-            ),
+            if (isHead)
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(color: _blue),
+                children: List.generate(5, hdrCell),
+              ),
             ...dataRows,
           ],
         ),

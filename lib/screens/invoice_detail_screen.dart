@@ -493,6 +493,19 @@ class _A4PreviewPages extends StatelessWidget {
       start = endN;
     }
 
+    // ── Orphan-totals guard ────────────────────────────────────────────────
+    // Ensure the last page (which shows the totals block) has at least 2 items,
+    // so the totals never appears visually "alone" or with a single orphan row.
+    // We steal from the previous page only if it has enough items to spare.
+    while (pages.length >= 2 &&
+        pages.last.length < 2 &&
+        pages[pages.length - 2].length > 1) {
+      final prevPage = List<InvoiceItem>.from(pages[pages.length - 2]);
+      final stolen   = prevPage.removeLast();
+      pages[pages.length - 2] = prevPage;
+      pages[pages.length - 1] = [stolen, ...pages.last];
+    }
+
     return _PaginationResult(pages: pages, totalPages: pages.length);
   }
 
