@@ -1536,76 +1536,12 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                       ),
                       child: Column(
                         children: [
-                          // رأس الأعمدة
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
-                            decoration: BoxDecoration(
-                              color:
-                                  AppTheme.salesColor.withValues(alpha: 0.06),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Row(
-                              children: [
-                                SizedBox(
-                                  width: 26,
-                                  child: Text('#',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: AppTheme.salesColor)),
-                                ),
-                                Expanded(
-                                  flex: 5,
-                                  child: Text('المادة (من المخزن)',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: AppTheme.salesColor)),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text('الكمية',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: AppTheme.salesColor)),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text('السعر',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: AppTheme.salesColor)),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text('الإجمالي',
-                                      textAlign: TextAlign.right,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          color: AppTheme.salesColor)),
-                                ),
-                                SizedBox(width: 28),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 6),
 
                           // صفوف المواد
-                          ListView.separated(
+                          ListView.builder(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: _rows.length,
-                            separatorBuilder: (_, __) => const Divider(
-                                height: 1,
-                                indent: 12,
-                                endIndent: 12,
-                                color: Color(0xFFE8EAF0)),
                             itemBuilder: (_, i) => _ItemRowWidget(
                               rowCtrl: _rows[i],
                               inventoryItems: _inventoryItems,
@@ -2466,28 +2402,33 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   }) {
     return SizedBox(
       height: fldH,
-      child: TextField(
-        controller: ctrl,
-        onChanged: (_) => onChanged(),
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: TextStyle(fontSize: fSize, color: AppTheme.textGrey),
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: const BorderSide(color: AppTheme.divider),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: const BorderSide(color: AppTheme.divider),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
+      child: Center(
+        child: TextField(
+          controller: ctrl,
+          onChanged: (_) => onChanged(),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textAlign: TextAlign.center,
+          textAlignVertical: TextAlignVertical.center,
+          style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(fontSize: fSize, color: AppTheme.textGrey),
+            isDense: true,
+            filled: true,
+            fillColor: const Color(0xFFF9FAFB),
+            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: (fldH - fSize * 1.4) / 2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(7),
+              borderSide: const BorderSide(color: AppTheme.divider),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(7),
+              borderSide: const BorderSide(color: AppTheme.divider),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(7),
+              borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
+            ),
           ),
         ),
       ),
