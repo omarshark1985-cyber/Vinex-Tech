@@ -1571,12 +1571,9 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                         ),
                       ),
 
-                    // ┌─ قسم: المواد ────────────────────────────────────┐
-                    _SheetSection(
-                      title: 'المواد',
-                      icon: Icons.inventory_2_outlined,
-                      child: Column(
-                        children: [
+                    // ┌─ صفوف المواد ────────────────────────────────────┐
+                    Column(
+                      children: [
 
                           // صفوف المواد
                           ListView.builder(
@@ -1639,8 +1636,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                      ],
                     ),
                     const SizedBox(height: 14),
 
