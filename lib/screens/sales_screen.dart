@@ -1573,6 +1573,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
 
                     // ┌─ صفوف المواد ────────────────────────────────────┐
                     Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
 
                           // صفوف المواد
