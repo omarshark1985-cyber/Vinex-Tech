@@ -2233,27 +2233,25 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final sel   = widget.rowCtrl.selectedItem;
-    final mq    = MediaQuery.of(context).size;
-    final compact = mq.width < 400;
+    final sel = widget.rowCtrl.selectedItem;
 
-    // ── stock colours ──────────────────────────────────────────────────
-    Color  sBg  = Colors.grey.shade50;
-    Color  sBdr = Colors.grey.shade200;
-    Color  sClr = AppTheme.textGrey;
+    // ── stock colours ────────────────────────────────────────────────────────
+    Color    sBg  = Colors.grey.shade50;
+    Color    sBdr = Colors.grey.shade200;
+    Color    sClr = AppTheme.textGrey;
     IconData sIco = Icons.inventory_2_outlined;
-    String sQty = '—';
+    String   sQty = '—';
     if (sel != null) {
       if (sel.quantity <= 0) {
-        sBg  = Colors.red.shade50;    sBdr = Colors.red.shade300;
+        sBg = Colors.red.shade50;     sBdr = Colors.red.shade300;
         sClr = Colors.red.shade700;   sIco = Icons.warning_amber_rounded;
         sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       } else if (sel.isLowStock) {
-        sBg  = Colors.orange.shade50; sBdr = Colors.orange.shade300;
+        sBg = Colors.orange.shade50;  sBdr = Colors.orange.shade300;
         sClr = Colors.orange.shade700; sIco = Icons.warning_amber_outlined;
         sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       } else {
-        sBg  = Colors.green.shade50;  sBdr = Colors.green.shade300;
+        sBg = Colors.green.shade50;   sBdr = Colors.green.shade300;
         sClr = Colors.green.shade700; sIco = Icons.check_circle_outline;
         sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       }
@@ -2276,100 +2274,133 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ═══════════════════════════════════════════════════════════════
-          // الصف الرئيسي: تسلسل │ مادة │ كمية │ سعر │ إجمالي │ مخزون │ أزرار
-          // ═══════════════════════════════════════════════════════════════
-          Padding(
-            padding: const EdgeInsets.fromLTRB(6, 6, 4, 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
+          // ─────────────────────────────────────────────────────────────────
+          // الصف الرئيسي — كل الحقول في سطر واحد مع توزيع نسبي بـ Expanded
+          // flex المعيار:
+          //   • المادة   → flex 30  (أطول اسم → أكبر مساحة)
+          //   • الكمية   → flex  9  (رقم قصير)
+          //   • السعر    → flex 14  (5 أرقام + IQD)
+          //   • الإجمالي → flex 16  (7 أرقام + IQD)
+          //   • المخزون  → flex 13  (رقم + وحدة + أيقونة)
+          // ─────────────────────────────────────────────────────────────────
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // حجم الخط يتناسب مع العرض المتاح
+              final w      = constraints.maxWidth;
+              final fSize  = w < 340 ? 10.0 : (w < 420 ? 11.0 : 12.0);
+              final lSize  = w < 340 ?  9.0 : (w < 420 ? 10.0 : 11.0);
+              final fldH   = w < 340 ? 34.0 : 38.0;
 
-                // ① رقم التسلسل
-                Container(
-                  width: 22, height: 22,
-                  decoration: BoxDecoration(
-                    color: AppTheme.salesColor.withValues(alpha: 0.13),
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    '${widget.rowCtrl.sequence}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.salesColor,
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(6, 7, 4, 7),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+
+                    // ① رقم التسلسل — دائرة ثابتة صغيرة
+                    _seqBadge(fSize),
+                    const SizedBox(width: 5),
+
+                    // ② المادة — أكبر حصة من العرض (flex 30)
+                    Expanded(
+                      flex: 30,
+                      child: _materialField(sel, fSize, lSize, fldH),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 5),
+                    const SizedBox(width: 4),
 
-                // ② حقل المادة (قابل للبحث)
-                Expanded(
-                  flex: compact ? 5 : 4,
-                  child: _materialField(sel, compact),
-                ),
-                const SizedBox(width: 4),
+                    // ③ الكمية — flex 9 (أرقام صغيرة)
+                    Expanded(
+                      flex: 9,
+                      child: _numField(
+                        ctrl: widget.rowCtrl.qtyCtrl,
+                        hint: '0',
+                        label: 'الكمية',
+                        onChanged: widget.onChanged,
+                        fSize: fSize,
+                        lSize: lSize,
+                        fldH: fldH,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
 
-                // ③ الكمية
-                SizedBox(
-                  width: compact ? 46 : 54,
-                  child: _numField(
-                    ctrl: widget.rowCtrl.qtyCtrl,
-                    hint: '0',
-                    label: 'الكمية',
-                    onChanged: widget.onChanged,
-                  ),
-                ),
-                const SizedBox(width: 4),
+                    // ④ السعر — flex 14
+                    Expanded(
+                      flex: 14,
+                      child: _numField(
+                        ctrl: widget.rowCtrl.priceCtrl,
+                        hint: '0',
+                        label: 'السعر',
+                        onChanged: widget.onChanged,
+                        fSize: fSize,
+                        lSize: lSize,
+                        fldH: fldH,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
 
-                // ④ السعر
-                SizedBox(
-                  width: compact ? 62 : 72,
-                  child: _numField(
-                    ctrl: widget.rowCtrl.priceCtrl,
-                    hint: '0',
-                    label: 'السعر',
-                    onChanged: widget.onChanged,
-                  ),
-                ),
-                const SizedBox(width: 4),
+                    // ⑤ الإجمالي — flex 16 (أكبر رقم + IQD)
+                    Expanded(
+                      flex: 16,
+                      child: _totalCell(
+                        widget.rowCtrl.lineTotal,
+                        fSize, lSize, fldH,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
 
-                // ⑤ الإجمالي
-                SizedBox(
-                  width: compact ? 62 : 72,
-                  child: _totalCell(widget.rowCtrl.lineTotal, compact),
-                ),
-                const SizedBox(width: 4),
+                    // ⑥ المخزون — flex 13
+                    Expanded(
+                      flex: 13,
+                      child: _stockCell(
+                        sBg, sBdr, sClr, sIco, sQty,
+                        fSize, lSize, fldH,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
 
-                // ⑥ مؤشر المخزون
-                SizedBox(
-                  width: compact ? 52 : 60,
-                  child: _stockCell(sBg, sBdr, sClr, sIco, sQty, compact),
+                    // ⑦ أزرار ▲ ▼ ✕ — عمود ثابت 22px
+                    _actionButtons(),
+                  ],
                 ),
-                const SizedBox(width: 2),
-
-                // ⑦ أزرار التحريك والحذف (عمود)
-                _actionButtons(),
-              ],
-            ),
+              );
+            },
           ),
 
-          // ═══════════════════════════════════════════════════════════════
-          // قائمة البحث المنسدلة (تظهر تحت الصف عند الضغط على المادة)
-          // ═══════════════════════════════════════════════════════════════
+          // ─────────────────────────────────────────────────────────────────
+          // قائمة البحث المنسدلة
+          // ─────────────────────────────────────────────────────────────────
           if (_showSearch)
             Padding(
-              padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
-              child: _searchDropdown(compact),
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 7),
+              child: _searchDropdown(),
             ),
         ],
       ),
     );
   }
 
+  // ── دائرة التسلسل ────────────────────────────────────────────────────────────
+  Widget _seqBadge(double fSize) {
+    return Container(
+      width: 22, height: 22,
+      decoration: BoxDecoration(
+        color: AppTheme.salesColor.withValues(alpha: 0.13),
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '${widget.rowCtrl.sequence}',
+        style: TextStyle(
+          fontSize: fSize - 1,
+          fontWeight: FontWeight.bold,
+          color: AppTheme.salesColor,
+        ),
+      ),
+    );
+  }
+
   // ── حقل المادة ──────────────────────────────────────────────────────────────
-  Widget _materialField(InventoryItem? sel, bool compact) {
+  Widget _materialField(InventoryItem? sel, double fSize, double lSize, double fldH) {
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -2385,7 +2416,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
         }
       },
       child: Container(
-        height: 52,
+        height: fldH + 14,   // أطول قليلاً لأنه يحمل تسمية + قيمة
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
         decoration: BoxDecoration(
           color: _showSearch
@@ -2407,14 +2438,14 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
               children: [
                 Icon(
                   sel != null ? Icons.inventory_2_rounded : Icons.add_box_outlined,
-                  size: 11,
+                  size: lSize,
                   color: sel != null ? AppTheme.salesColor : Colors.orange.shade400,
                 ),
                 const SizedBox(width: 3),
                 Text(
                   'المادة',
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: lSize,
                     color: AppTheme.textGrey,
                     fontWeight: FontWeight.w500,
                   ),
@@ -2422,16 +2453,16 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
                 const Spacer(),
                 Icon(
                   _showSearch ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                  size: 13,
+                  size: lSize + 2,
                   color: AppTheme.textGrey,
                 ),
               ],
             ),
             const SizedBox(height: 2),
             Text(
-              sel?.itemName ?? 'اختر...',
+              sel?.itemName ?? 'اختر المادة...',
               style: TextStyle(
-                fontSize: compact ? 11 : 12,
+                fontSize: fSize,
                 fontWeight: sel != null ? FontWeight.bold : FontWeight.normal,
                 color: sel != null ? AppTheme.textDark : Colors.orange.shade600,
               ),
@@ -2450,29 +2481,32 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     required String hint,
     required String label,
     required VoidCallback onChanged,
+    required double fSize,
+    required double lSize,
+    required double fldH,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 2),
         SizedBox(
-          height: 36,
+          height: fldH,
           child: TextField(
             controller: ctrl,
             onChanged: (_) => onChanged(),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(fontSize: 12, color: AppTheme.textGrey),
+              hintStyle: TextStyle(fontSize: fSize, color: AppTheme.textGrey),
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(7),
                 borderSide: const BorderSide(color: AppTheme.divider),
@@ -2493,33 +2527,36 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   }
 
   // ── خلية الإجمالي ────────────────────────────────────────────────────────────
-  Widget _totalCell(double total, bool compact) {
+  Widget _totalCell(double total, double fSize, double lSize, double fldH) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
+        Text(
           'الإجمالي',
-          style: TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 2),
         Container(
-          height: 36,
+          height: fldH,
           alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 3),
           decoration: BoxDecoration(
             color: AppTheme.salesColor.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.25)),
+            border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.30)),
           ),
-          child: Text(
-            total == 0 ? '—' : CurrencyHelper.format(total),
-            style: TextStyle(
-              fontSize: compact ? 10 : 11,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.salesColor,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              total == 0 ? '—' : CurrencyHelper.format(total),
+              style: TextStyle(
+                fontSize: fSize,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.salesColor,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -2527,41 +2564,44 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   }
 
   // ── خلية المخزون ─────────────────────────────────────────────────────────────
-  Widget _stockCell(Color bg, Color bdr, Color clr, IconData ico, String qty, bool compact) {
+  Widget _stockCell(Color bg, Color bdr, Color clr, IconData ico, String qty,
+      double fSize, double lSize, double fldH) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
+        Text(
           'المخزون',
-          style: TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 2),
         Container(
-          height: 36,
+          height: fldH,
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(7),
             border: Border.all(color: bdr),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(ico, size: 11, color: clr),
-              const SizedBox(height: 1),
-              Text(
-                qty,
-                style: TextStyle(
-                  fontSize: compact ? 9 : 10,
-                  fontWeight: FontWeight.bold,
-                  color: clr,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(ico, size: lSize + 1, color: clr),
+                const SizedBox(height: 1),
+                Text(
+                  qty,
+                  style: TextStyle(
+                    fontSize: lSize,
+                    fontWeight: FontWeight.bold,
+                    color: clr,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -2635,7 +2675,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   }
 
   // ── قائمة البحث المنسدلة ─────────────────────────────────────────────────────
-  Widget _searchDropdown(bool compact) {
+  Widget _searchDropdown() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
