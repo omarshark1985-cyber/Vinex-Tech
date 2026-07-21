@@ -907,7 +907,7 @@ class _A4Page extends StatelessWidget {
                       ? Alignment.center
                       : Alignment.centerRight,
               child: Text(cells[c],
-                  style: const TextStyle(fontSize: 11, color: _pvDark, fontWeight: FontWeight.bold)),
+                  style: const TextStyle(fontSize: 11, color: _pvDark)),
             ),
           ),
         )),

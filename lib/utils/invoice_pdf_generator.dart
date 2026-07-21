@@ -160,7 +160,7 @@ class InvoicePdfGenerator {
       buildWidgets.add(pw.Padding(
         padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
         child: _buildItemsTable(chunk,
-            isHead: i == 0, globalOffset: globalOffset),
+            isHead: true, globalOffset: globalOffset),
       ));
       globalOffset += chunk.length;
     }
@@ -174,7 +174,7 @@ class InvoicePdfGenerator {
       child: pw.Container(
         child: pw.Column(children: [
           _buildItemsTable(tailChunk,
-              isHead: headChunks.isEmpty, globalOffset: globalOffset),
+              isHead: true, globalOffset: globalOffset),
           pw.SizedBox(height: 16 * _s),
           _buildTotalsRow(invoice),
           if (invoice.notes.isNotEmpty) ...[
@@ -484,8 +484,7 @@ class InvoicePdfGenerator {
           child: pw.Align(
             alignment: hAligns[c],
             child: pw.Text(cells[c],
-                style: pw.TextStyle(fontSize: 11, color: _dark,
-                    fontWeight: pw.FontWeight.bold)),
+                style: pw.TextStyle(fontSize: 11, color: _dark)),
           ),
         )),
       );
