@@ -1,9 +1,13 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:uuid/uuid.dart';
 import 'dart:convert' show base64Encode;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../utils/js_helper.dart';
 import '../utils/responsive.dart';
@@ -13,7 +17,6 @@ import '../models/inventory_model.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/currency_helper.dart';
-import '../utils/invoice_pdf_generator.dart';
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -247,15 +250,18 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   String get _invNum =>
       widget.invoice.invoiceNumber.toString().padLeft(4, '0');
 
-  // ── Export PDF ──────────────────────────────────────────────────────────────
+  // ── key to reach the preview widget's state ────────────────────────────────
+  final _previewKey = GlobalKey<_A4PreviewPagesState>();
+
+  // ── Export PDF — captures Flutter preview pages directly ────────────────────
   Future<void> _exportPdf() async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
-      final bytes = await InvoicePdfGenerator.generate(widget.invoice);
+      final bytes    = await _previewKey.currentState!.capturePdf();
       final fileName = 'Invoice_$_invNum.pdf';
       if (kIsWeb) {
-        final b64 = base64Encode(Uint8List.fromList(bytes));
+        final b64 = base64Encode(bytes);
         evalJs("""
           (function(){
             var b64='$b64';
@@ -276,8 +282,7 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
           duration: const Duration(seconds: 3),
         ));
       } else {
-        await Printing.sharePdf(
-            bytes: Uint8List.fromList(bytes), filename: fileName);
+        await Printing.sharePdf(bytes: bytes, filename: fileName);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('exportPdf error: $e');
@@ -291,11 +296,9 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
   // ── Print (mobile only) ─────────────────────────────────────────────────────
   Future<void> _printPdf() async {
     try {
-      await Printing.layoutPdf(
-        onLayout: (_) => InvoicePdfGenerator.generate(widget.invoice)
-            .then((list) => Uint8List.fromList(list)),
-        name: 'Invoice_$_invNum',
-      );
+      final bytes = await _previewKey.currentState!.capturePdf();
+      await Printing.sharePdf(
+          bytes: bytes, filename: 'Invoice_$_invNum.pdf');
     } catch (e) {
       if (kDebugMode) debugPrint('print error: $e');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -356,6 +359,7 @@ class _InvoicePrintScreenState extends State<InvoicePrintScreen> {
       ),
       // ── Body: multi-page A4 preview ──────────────────────────────────────
       body: _A4PreviewPages(
+        key: _previewKey,
         invoice: widget.invoice,
         invNum: invNum,
         dateStr: dateStr,
@@ -412,86 +416,67 @@ const double _bodyPadBott = 20.0;   // bottom padding before footer
 // ══════════════════════════════════════════════════════════════════════════════
 // _A4PreviewPages  — paginates items across multiple A4 pages
 // ══════════════════════════════════════════════════════════════════════════════
-class _A4PreviewPages extends StatelessWidget {
+class _A4PreviewPages extends StatefulWidget {
   final Invoice invoice;
   final String  invNum;
   final String  dateStr;
 
   const _A4PreviewPages({
+    super.key,
     required this.invoice,
     required this.invNum,
     required this.dateStr,
   });
 
-  // ── Calculate how many rows fit on page 1 vs continuation pages ─────────────
-  static const int _maxRowsPerPage = 16; // hard cap: never exceed 16 rows/page
+  @override
+  State<_A4PreviewPages> createState() => _A4PreviewPagesState();
+}
+
+class _A4PreviewPagesState extends State<_A4PreviewPages> {
+  // One GlobalKey per page for RepaintBoundary capture
+  // One GlobalKey per page for RepaintBoundary capture
+  List<GlobalKey> _pageKeys = [];
+
+  // ── Calculate how many rows fit on page 1 vs continuation pages ──────────────
+  static const int _maxRowsPerPage = 16;
+
+  Invoice get invoice => widget.invoice;
+  String  get invNum  => widget.invNum;
+  String  get dateStr => widget.dateStr;
 
   _PaginationResult _paginate() {
     final hasDiscount = invoice.discount > 0;
     final hasDP       = invoice.hasDownPayment;
 
-    // Usable body height on page 1
-    //  = A4H − header − bodyPadV − infoRow − sectionGap − tableHdr − gap(16) − totals − notes? − footer − bodyPadBott
     double totalsHeight = _totalsH
         + (hasDiscount ? _discountRow : 0)
         + (hasDP       ? _dpRows      : 0);
     double notesHeight  = invoice.notes.isNotEmpty ? _notesH + 12 : 0;
 
     double usablePage1 = _a4H
-        - _hdrH
-        - _bodyPadV
-        - _infoRowH
-        - _sectionGap
-        - _tableHdrH
-        - 16          // gap after table
-        - totalsHeight
-        - notesHeight
-        - _bodyPadBott
-        - _footerH;
+        - _hdrH - _bodyPadV - _infoRowH - _sectionGap
+        - _tableHdrH - 16 - totalsHeight - notesHeight
+        - _bodyPadBott - _footerH;
+    int rowsPage1 = (usablePage1 / _tableRowH).floor().clamp(1, _maxRowsPerPage);
 
-    // How many rows fit on page 1? (capped at _maxRowsPerPage)
-    int rowsPage1 = (usablePage1 / _tableRowH).floor()
-        .clamp(1, _maxRowsPerPage);
-
-    // Usable body height on continuation pages
-    //  = A4H − contHeader − bodyPadVCont − tableHdr − gap(16) − totals(last page) − notes(last page) − footer − bodyPadBott
-    // For non-last continuation pages the totals/notes don't appear
     double usableContFull = _a4H
-        - 52          // continuation mini-header height
-        - _bodyPadVCont
-        - _tableHdrH
-        - 16
-        - _bodyPadBott
-        - _footerH;
+        - 52 - _bodyPadVCont - _tableHdrH - 16
+        - _bodyPadBott - _footerH;
+    int rowsContFull = (usableContFull / _tableRowH).floor().clamp(1, _maxRowsPerPage);
 
-    // Capped at _maxRowsPerPage
-    int rowsContFull = (usableContFull / _tableRowH).floor()
-        .clamp(1, _maxRowsPerPage);
-
-    // Split items into pages
     List<List<InvoiceItem>> pages = [];
     int start = 0;
 
-    // Page 1
     int end1 = (start + rowsPage1).clamp(0, invoice.items.length);
     pages.add(invoice.items.sublist(start, end1));
     start = end1;
 
-    // Continuation pages
     while (start < invoice.items.length) {
-      // Last page: reserve space for totals + notes
       double usableContLast = _a4H
-          - 52
-          - _bodyPadVCont
-          - _tableHdrH
-          - 16
-          - totalsHeight
-          - notesHeight
-          - _bodyPadBott
-          - _footerH;
-      // Capped at _maxRowsPerPage
-      int rowsContLast = (usableContLast / _tableRowH).floor()
-          .clamp(1, _maxRowsPerPage);
+          - 52 - _bodyPadVCont - _tableHdrH - 16
+          - totalsHeight - notesHeight - _bodyPadBott - _footerH;
+      int rowsContLast =
+          (usableContLast / _tableRowH).floor().clamp(1, _maxRowsPerPage);
 
       bool isLastChunk = (start + rowsContLast) >= invoice.items.length;
       int rowsThisPage = isLastChunk ? rowsContLast : rowsContFull;
@@ -500,10 +485,7 @@ class _A4PreviewPages extends StatelessWidget {
       start = endN;
     }
 
-    // ── Orphan-totals guard ────────────────────────────────────────────────
-    // Ensure the last page (which shows the totals block) has at least 2 items,
-    // so the totals never appears visually "alone" or with a single orphan row.
-    // We steal from the previous page only if it has enough items to spare.
+    // Orphan-totals guard
     while (pages.length >= 2 &&
         pages.last.length < 2 &&
         pages[pages.length - 2].length > 1) {
@@ -516,22 +498,57 @@ class _A4PreviewPages extends StatelessWidget {
     return _PaginationResult(pages: pages, totalPages: pages.length);
   }
 
+  // ── Capture every preview page into a PDF ────────────────────────────────────
+  // Each page is rendered at 3x pixel density into a PNG image,
+  // then placed as a full A4 page in the PDF — pixel-perfect match.
+  Future<Uint8List> capturePdf() async {
+    final doc = pw.Document(compress: true);
+
+    for (int i = 0; i < _pageKeys.length; i++) {
+      final key = _pageKeys[i];
+      final boundary =
+          key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) continue;
+
+      // 3x pixel ratio gives crisp text in the PDF
+      final ui.Image img = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+      final pngBytes = byteData!.buffer.asUint8List();
+
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.Image(
+          pw.MemoryImage(pngBytes),
+          fit: pw.BoxFit.fill,
+          width:  PdfPageFormat.a4.width,
+          height: PdfPageFormat.a4.height,
+        ),
+      ));
+    }
+
+    return doc.save();
+  }
+
   @override
   Widget build(BuildContext context) {
     final result     = _paginate();
     final totalPages = result.totalPages;
 
+    // Rebuild the key list whenever page count changes
+    if (_pageKeys.length != totalPages) {
+      _pageKeys = List.generate(totalPages, (_) => GlobalKey());
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Scale the 794px-wide A4 page to fit the available screen width
-        // keeping the exact A4 aspect ratio (794 : 1123)
-        final screenW   = constraints.maxWidth == double.infinity
+        final screenW = constraints.maxWidth == double.infinity
             ? 794.0
             : constraints.maxWidth;
-        final pageW     = screenW.clamp(0.0, _a4W);       // never wider than real A4
-        final scale     = pageW / _a4W;
-        final pageH     = _a4H * scale;
-        final hPad      = ((screenW - pageW) / 2).clamp(0.0, 20.0);
+        final pageW   = screenW.clamp(0.0, _a4W);
+        final scale   = pageW / _a4W;
+        final pageH   = _a4H * scale;
+        final hPad    = ((screenW - pageW) / 2).clamp(0.0, 20.0);
 
         return SingleChildScrollView(
           padding: EdgeInsets.symmetric(vertical: 24, horizontal: hPad),
@@ -539,46 +556,43 @@ class _A4PreviewPages extends StatelessWidget {
             child: Column(
               children: [
                 for (int p = 0; p < totalPages; p++) ...[
-                  // ── Drop-shadow A4 page wrapper (exact A4 ratio) ────────
+                  // Drop-shadow wrapper (scaled for screen display)
                   SizedBox(
                     width:  pageW,
                     height: pageH,
                     child: Transform.scale(
                       scale: scale,
                       alignment: Alignment.topLeft,
-                      child: SizedBox(
-                        width:  _a4W,
-                        height: _a4H,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.28),
-                                blurRadius: 18,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
+                      // RepaintBoundary wraps the unscaled 794x1123 page
+                      // so we always capture the true A4 pixels.
+                      child: RepaintBoundary(
+                        key: _pageKeys[p],
+                        child: SizedBox(
+                          width:  _a4W,
+                          height: _a4H,
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(color: Colors.white),
+                            child: _A4Page(
+                              invoice:      invoice,
+                              invNum:       invNum,
+                              dateStr:      dateStr,
+                              items:        result.pages[p],
+                              pageIndex:    p,
+                              totalPages:   totalPages,
+                              globalOffset: result.pages
+                                  .sublist(0, p)
+                                  .fold(0, (s, pg) => s + pg.length),
+                              showTotals:   p == totalPages - 1,
+                              showNotes:    p == totalPages - 1 &&
+                                  invoice.notes.isNotEmpty,
+                              showInfoRow:  p == 0,
+                            ),
                           ),
-                          child: _A4Page(
-                  invoice:     invoice,
-                  invNum:      invNum,
-                  dateStr:     dateStr,
-                  items:       result.pages[p],
-                  pageIndex:   p,
-                  totalPages:  totalPages,
-                  globalOffset: result.pages
-                      .sublist(0, p)
-                      .fold(0, (s, pg) => s + pg.length),
-                  showTotals:  p == totalPages - 1,
-                  showNotes:   p == totalPages - 1 && invoice.notes.isNotEmpty,
-                  showInfoRow: p == 0,
-                ),
                         ),
                       ),
                     ),
                   ),
-                  // ── Gap between pages ─────────────────────────────────────
+                  // Gap between pages (screen view only, not in PDF)
                   if (p < totalPages - 1)
                     SizedBox(height: 20 * scale),
                 ],
@@ -590,6 +604,7 @@ class _A4PreviewPages extends StatelessWidget {
     );
   }
 }
+
 
 // ── Simple result holder ─────────────────────────────────────────────────────
 class _PaginationResult {
