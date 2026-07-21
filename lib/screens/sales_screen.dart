@@ -2274,104 +2274,128 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ─────────────────────────────────────────────────────────────────
-          // الصف الرئيسي — كل الحقول في سطر واحد مع توزيع نسبي بـ Expanded
-          // flex المعيار:
-          //   • المادة   → flex 30  (أطول اسم → أكبر مساحة)
-          //   • الكمية   → flex  9  (رقم قصير)
-          //   • السعر    → flex 14  (5 أرقام + IQD)
-          //   • الإجمالي → flex 16  (7 أرقام + IQD)
-          //   • المخزون  → flex 13  (رقم + وحدة + أيقونة)
-          // ─────────────────────────────────────────────────────────────────
           LayoutBuilder(
-            builder: (context, constraints) {
-              // حجم الخط يتناسب مع العرض المتاح
-              final w      = constraints.maxWidth;
-              final fSize  = w < 340 ? 10.0 : (w < 420 ? 11.0 : 12.0);
-              final lSize  = w < 340 ?  9.0 : (w < 420 ? 10.0 : 11.0);
-              final fldH   = w < 340 ? 34.0 : 38.0;
+            builder: (ctx, bc) {
+              final w     = bc.maxWidth;
+              final fSize = w < 340 ? 10.0 : (w < 420 ? 11.0 : 12.0);
+              final lSize = w < 340 ?  9.5 : (w < 420 ? 10.5 : 11.0);
+              // ارتفاع موحّد لجميع حقول الإدخال — يُستخدم في كل خلية
+              const fldH  = 36.0;
 
               return Padding(
-                padding: const EdgeInsets.fromLTRB(6, 7, 4, 7),
+                padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
 
-                    // ① رقم التسلسل — دائرة ثابتة صغيرة
-                    _seqBadge(fSize),
-                    const SizedBox(width: 5),
+                    // ══════════════════════════════════════════════════════════
+                    // ① رقم التسلسل — مثبّت في المنتصف عمودياً
+                    // ══════════════════════════════════════════════════════════
+                    Padding(
+                      padding: EdgeInsets.only(
+                        bottom: (fldH - 22) / 2,   // يتوسّط مع الحقول
+                      ),
+                      child: _seqBadge(fSize),
+                    ),
+                    const SizedBox(width: 6),
 
-                    // ② المادة — أكبر حصة من العرض (flex 30)
+                    // ══════════════════════════════════════════════════════════
+                    // ② المادة flex 30 — التسمية Bold خارج الحقل + حقل بارتفاع fldH
+                    // ══════════════════════════════════════════════════════════
                     Expanded(
                       flex: 30,
-                      child: _materialField(sel, fSize, lSize, fldH),
+                      child: _col(
+                        label: 'المادة',
+                        lSize: lSize,
+                        child: _materialInput(sel, fSize, fldH),
+                      ),
                     ),
                     const SizedBox(width: 4),
 
-                    // ③ الكمية — flex 9 (أرقام صغيرة)
+                    // ══════════════════════════════════════════════════════════
+                    // ③ الكمية flex 9
+                    // ══════════════════════════════════════════════════════════
                     Expanded(
                       flex: 9,
-                      child: _numField(
-                        ctrl: widget.rowCtrl.qtyCtrl,
-                        hint: '0',
+                      child: _col(
                         label: 'الكمية',
-                        onChanged: widget.onChanged,
-                        fSize: fSize,
                         lSize: lSize,
-                        fldH: fldH,
+                        child: _numInput(
+                          ctrl: widget.rowCtrl.qtyCtrl,
+                          hint: '0',
+                          fSize: fSize,
+                          fldH: fldH,
+                          onChanged: widget.onChanged,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 4),
 
-                    // ④ السعر — flex 14
+                    // ══════════════════════════════════════════════════════════
+                    // ④ السعر flex 14
+                    // ══════════════════════════════════════════════════════════
                     Expanded(
                       flex: 14,
-                      child: _numField(
-                        ctrl: widget.rowCtrl.priceCtrl,
-                        hint: '0',
+                      child: _col(
                         label: 'السعر',
-                        onChanged: widget.onChanged,
-                        fSize: fSize,
                         lSize: lSize,
-                        fldH: fldH,
+                        child: _numInput(
+                          ctrl: widget.rowCtrl.priceCtrl,
+                          hint: '0',
+                          fSize: fSize,
+                          fldH: fldH,
+                          onChanged: widget.onChanged,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 4),
 
-                    // ⑤ الإجمالي — flex 16 (أكبر رقم + IQD)
+                    // ══════════════════════════════════════════════════════════
+                    // ⑤ الإجمالي flex 16
+                    // ══════════════════════════════════════════════════════════
                     Expanded(
                       flex: 16,
-                      child: _totalCell(
-                        widget.rowCtrl.lineTotal,
-                        fSize, lSize, fldH,
+                      child: _col(
+                        label: 'الإجمالي',
+                        lSize: lSize,
+                        child: _totalInput(
+                          widget.rowCtrl.lineTotal,
+                          fSize, fldH,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 4),
 
-                    // ⑥ المخزون — flex 13
+                    // ══════════════════════════════════════════════════════════
+                    // ⑥ المخزون flex 13
+                    // ══════════════════════════════════════════════════════════
                     Expanded(
                       flex: 13,
-                      child: _stockCell(
-                        sBg, sBdr, sClr, sIco, sQty,
-                        fSize, lSize, fldH,
+                      child: _col(
+                        label: 'المخزون',
+                        lSize: lSize,
+                        child: _stockInput(
+                          sBg, sBdr, sClr, sIco, sQty,
+                          fSize, fldH,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 3),
+                    const SizedBox(width: 4),
 
-                    // ⑦ أزرار ▲ ▼ ✕ — عمود ثابت 22px
-                    _actionButtons(),
+                    // ══════════════════════════════════════════════════════════
+                    // ⑦ أزرار ▲ ▼ ✕ — محاذاة أسفل مع الحقول
+                    // ══════════════════════════════════════════════════════════
+                    _actionButtons(fldH),
                   ],
                 ),
               );
             },
           ),
 
-          // ─────────────────────────────────────────────────────────────────
           // قائمة البحث المنسدلة
-          // ─────────────────────────────────────────────────────────────────
           if (_showSearch)
             Padding(
-              padding: const EdgeInsets.fromLTRB(6, 0, 6, 7),
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
               child: _searchDropdown(),
             ),
         ],
@@ -2379,6 +2403,9 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // مساعد: عمود = تسمية Bold + حقل — التسمية دائماً خارج الحقل
+  // ══════════════════════════════════════════════════════════════════════════════
   // ── دائرة التسلسل ────────────────────────────────────────────────────────────
   Widget _seqBadge(double fSize) {
     return Container(
@@ -2399,8 +2426,35 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  // ── حقل المادة ──────────────────────────────────────────────────────────────
-  Widget _materialField(InventoryItem? sel, double fSize, double lSize, double fldH) {
+  Widget _col({
+    required String label,
+    required double lSize,
+    required Widget child,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: lSize,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textDark,
+          ),
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 4),
+        child,
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // حقل المادة — ارتفاع fldH مثل باقي الحقول
+  // ══════════════════════════════════════════════════════════════════════════════
+  Widget _materialInput(InventoryItem? sel, double fSize, double fldH) {
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -2409,65 +2463,45 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
           _searchCtrl.clear();
         });
         if (_showSearch) {
-          Future.delayed(const Duration(milliseconds: 80),
-              () => _searchFocus.requestFocus());
+          Future.delayed(
+              const Duration(milliseconds: 80), () => _searchFocus.requestFocus());
         } else {
           _searchFocus.unfocus();
         }
       },
       child: Container(
-        height: fldH + 14,   // أطول قليلاً لأنه يحمل تسمية + قيمة
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        height: fldH,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: _showSearch
-              ? AppTheme.salesColor.withValues(alpha: 0.05)
+              ? AppTheme.salesColor.withValues(alpha: 0.04)
               : (sel != null ? const Color(0xFFF9FAFB) : const Color(0xFFFFF8F0)),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
             color: _showSearch
                 ? AppTheme.salesColor
-                : (sel != null ? const Color(0xFFDDE1EA) : Colors.orange.shade200),
+                : (sel != null ? const Color(0xFFDDE1EA) : Colors.orange.shade300),
             width: _showSearch ? 1.5 : 1,
           ),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Icon(
-                  sel != null ? Icons.inventory_2_rounded : Icons.add_box_outlined,
-                  size: lSize,
-                  color: sel != null ? AppTheme.salesColor : Colors.orange.shade400,
+            Expanded(
+              child: Text(
+                sel?.itemName ?? 'اختر...',
+                style: TextStyle(
+                  fontSize: fSize,
+                  fontWeight: sel != null ? FontWeight.bold : FontWeight.normal,
+                  color: sel != null ? AppTheme.textDark : Colors.orange.shade500,
                 ),
-                const SizedBox(width: 3),
-                Text(
-                  'المادة',
-                  style: TextStyle(
-                    fontSize: lSize,
-                    color: AppTheme.textGrey,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const Spacer(),
-                Icon(
-                  _showSearch ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                  size: lSize + 2,
-                  color: AppTheme.textGrey,
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              sel?.itemName ?? 'اختر المادة...',
-              style: TextStyle(
-                fontSize: fSize,
-                fontWeight: sel != null ? FontWeight.bold : FontWeight.normal,
-                color: sel != null ? AppTheme.textDark : Colors.orange.shade600,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
+            ),
+            Icon(
+              _showSearch ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              size: fSize + 2,
+              color: _showSearch ? AppTheme.salesColor : AppTheme.textGrey,
             ),
           ],
         ),
@@ -2475,171 +2509,139 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  // ── حقل رقمي مع تسمية ───────────────────────────────────────────────────────
-  Widget _numField({
+  // ══════════════════════════════════════════════════════════════════════════════
+  // حقل رقمي — ارتفاع fldH
+  // ══════════════════════════════════════════════════════════════════════════════
+  Widget _numInput({
     required TextEditingController ctrl,
     required String hint,
-    required String label,
-    required VoidCallback onChanged,
     required double fSize,
-    required double lSize,
     required double fldH,
+    required VoidCallback onChanged,
   }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 2),
-        SizedBox(
-          height: fldH,
-          child: TextField(
-            controller: ctrl,
-            onChanged: (_) => onChanged(),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(fontSize: fSize, color: AppTheme.textGrey),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(7),
-                borderSide: const BorderSide(color: AppTheme.divider),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(7),
-                borderSide: const BorderSide(color: AppTheme.divider),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(7),
-                borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
-              ),
-            ),
+    return SizedBox(
+      height: fldH,
+      child: TextField(
+        controller: ctrl,
+        onChanged: (_) => onChanged(),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: TextStyle(fontSize: fSize, color: AppTheme.textGrey),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: AppTheme.divider),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: AppTheme.divider),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
           ),
         ),
-      ],
+      ),
     );
   }
 
-  // ── خلية الإجمالي ────────────────────────────────────────────────────────────
-  Widget _totalCell(double total, double fSize, double lSize, double fldH) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'الإجمالي',
-          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+  // ══════════════════════════════════════════════════════════════════════════════
+  // خلية الإجمالي — ارتفاع fldH
+  // ══════════════════════════════════════════════════════════════════════════════
+  Widget _totalInput(double total, double fSize, double fldH) {
+    return Container(
+      height: fldH,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: AppTheme.salesColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.30)),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          total == 0 ? '—' : CurrencyHelper.format(total),
+          style: TextStyle(
+            fontSize: fSize,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.salesColor,
+          ),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 2),
-        Container(
-          height: fldH,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 3),
-          decoration: BoxDecoration(
-            color: AppTheme.salesColor.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.30)),
-          ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              total == 0 ? '—' : CurrencyHelper.format(total),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // خلية المخزون — ارتفاع fldH
+  // ══════════════════════════════════════════════════════════════════════════════
+  Widget _stockInput(Color bg, Color bdr, Color clr, IconData ico, String qty,
+      double fSize, double fldH) {
+    return Container(
+      height: fldH,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: bdr),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(ico, size: fSize, color: clr),
+            const SizedBox(width: 3),
+            Text(
+              qty,
               style: TextStyle(
                 fontSize: fSize,
                 fontWeight: FontWeight.bold,
-                color: AppTheme.salesColor,
+                color: clr,
               ),
-              textAlign: TextAlign.center,
             ),
-          ),
+          ],
         ),
-      ],
-    );
-  }
-
-  // ── خلية المخزون ─────────────────────────────────────────────────────────────
-  Widget _stockCell(Color bg, Color bdr, Color clr, IconData ico, String qty,
-      double fSize, double lSize, double fldH) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'المخزون',
-          style: TextStyle(fontSize: lSize, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 2),
-        Container(
-          height: fldH,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: bdr),
-          ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(ico, size: lSize + 1, color: clr),
-                const SizedBox(height: 1),
-                Text(
-                  qty,
-                  style: TextStyle(
-                    fontSize: lSize,
-                    fontWeight: FontWeight.bold,
-                    color: clr,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   // ── أزرار التحريك والحذف ──────────────────────────────────────────────────────
-  Widget _actionButtons() {
-    return SizedBox(
-      width: 22,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // تحريك لأعلى
-          _tinyBtn(
-            icon: Icons.keyboard_arrow_up_rounded,
-            color: const Color(0xFF5C6BC0),
-            enabled: widget.canMoveUp,
-            onTap: widget.onMoveUp,
-          ),
-          const SizedBox(height: 2),
-          // تحريك لأسفل
-          _tinyBtn(
-            icon: Icons.keyboard_arrow_down_rounded,
-            color: const Color(0xFF5C6BC0),
-            enabled: widget.canMoveDown,
-            onTap: widget.onMoveDown,
-          ),
-          const SizedBox(height: 2),
-          // حذف
-          _tinyBtn(
-            icon: Icons.close_rounded,
-            color: AppTheme.errorColor,
-            enabled: widget.canDelete,
-            onTap: widget.canDelete ? widget.onDelete : () {},
-          ),
-        ],
-      ),
+  // fldH: ارتفاع الحقول — تُضاف إليه ارتفاع التسمية (lSize + 4) لتوسيط الأزرار
+  Widget _actionButtons(double fldH) {
+    // المجموع الكلي لعمود التسمية + الحقل = (lSize≈11 + 4 gap) + fldH ≈ 55px
+    // الأزرار الثلاثة = 3×22 + 2×2 = 70px — نوسّطها مع محور الحقول
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        _tinyBtn(
+          icon: Icons.keyboard_arrow_up_rounded,
+          color: const Color(0xFF5C6BC0),
+          enabled: widget.canMoveUp,
+          onTap: widget.onMoveUp,
+        ),
+        const SizedBox(height: 2),
+        _tinyBtn(
+          icon: Icons.keyboard_arrow_down_rounded,
+          color: const Color(0xFF5C6BC0),
+          enabled: widget.canMoveDown,
+          onTap: widget.onMoveDown,
+        ),
+        const SizedBox(height: 2),
+        _tinyBtn(
+          icon: Icons.close_rounded,
+          color: AppTheme.errorColor,
+          enabled: widget.canDelete,
+          onTap: widget.canDelete ? widget.onDelete : () {},
+        ),
+      ],
     );
   }
 
