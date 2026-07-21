@@ -2248,15 +2248,15 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       if (sel.quantity <= 0) {
         sBg  = Colors.red.shade50;     sBdr = Colors.red.shade300;
         sClr = Colors.red.shade700;    sIco = Icons.warning_amber_rounded;
-        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       } else if (sel.isLowStock) {
         sBg  = Colors.orange.shade50;  sBdr = Colors.orange.shade300;
         sClr = Colors.orange.shade700; sIco = Icons.warning_amber_outlined;
-        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       } else {
         sBg  = Colors.green.shade50;   sBdr = Colors.green.shade300;
         sClr = Colors.green.shade700;  sIco = Icons.check_circle_outline;
-        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       }
     }
 
@@ -2385,7 +2385,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       ),
       alignment: Alignment.center,
       child: Text(
-        '\${widget.rowCtrl.sequence}',
+        '${widget.rowCtrl.sequence}',
         style: TextStyle(
           fontSize: fSize - 1,
           fontWeight: FontWeight.bold,
