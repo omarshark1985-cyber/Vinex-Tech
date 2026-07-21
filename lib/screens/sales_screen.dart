@@ -1609,6 +1609,7 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                             itemBuilder: (_, i) => _ItemRowWidget(
                               rowCtrl: _rows[i],
                               inventoryItems: _inventoryItems,
+                              showHeader: i == 0,
                               canDelete: _rows.length > 1,
                               onDelete: () => _removeRow(i),
                               onChanged: () => setState(() {}),
@@ -2150,6 +2151,7 @@ class _ItemRowController {
 class _ItemRowWidget extends StatefulWidget {
   final _ItemRowController rowCtrl;
   final List<InventoryItem> inventoryItems;
+  final bool showHeader;
   final bool canDelete;
   final VoidCallback onDelete;
   final VoidCallback onChanged;
@@ -2161,6 +2163,7 @@ class _ItemRowWidget extends StatefulWidget {
   const _ItemRowWidget({
     required this.rowCtrl,
     required this.inventoryItems,
+    required this.showHeader,
     required this.canDelete,
     required this.onDelete,
     required this.onChanged,
@@ -2235,7 +2238,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   Widget build(BuildContext context) {
     final sel = widget.rowCtrl.selectedItem;
 
-    // ── stock colours ────────────────────────────────────────────────────────
+    // ── stock colours ──────────────────────────────────────────────────────────
     Color    sBg  = Colors.grey.shade50;
     Color    sBdr = Colors.grey.shade200;
     Color    sClr = AppTheme.textGrey;
@@ -2243,22 +2246,28 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     String   sQty = '—';
     if (sel != null) {
       if (sel.quantity <= 0) {
-        sBg = Colors.red.shade50;     sBdr = Colors.red.shade300;
-        sClr = Colors.red.shade700;   sIco = Icons.warning_amber_rounded;
-        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
+        sBg  = Colors.red.shade50;     sBdr = Colors.red.shade300;
+        sClr = Colors.red.shade700;    sIco = Icons.warning_amber_rounded;
+        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
       } else if (sel.isLowStock) {
-        sBg = Colors.orange.shade50;  sBdr = Colors.orange.shade300;
+        sBg  = Colors.orange.shade50;  sBdr = Colors.orange.shade300;
         sClr = Colors.orange.shade700; sIco = Icons.warning_amber_outlined;
-        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
+        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
       } else {
-        sBg = Colors.green.shade50;   sBdr = Colors.green.shade300;
-        sClr = Colors.green.shade700; sIco = Icons.check_circle_outline;
-        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
+        sBg  = Colors.green.shade50;   sBdr = Colors.green.shade300;
+        sClr = Colors.green.shade700;  sIco = Icons.check_circle_outline;
+        sQty = '\${sel.quantity.toStringAsFixed(0)} \${sel.unit}';
       }
     }
 
+    const double fldH  = 36.0;
+    const double fSize = 11.5;
+    const double lSize = 10.5;
+    const double btnW  = fldH;
+    const double btnsW = btnW * 3 + 3 * 2; // 3 buttons + 2 gaps of 3px
+
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: 3),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
@@ -2274,125 +2283,75 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LayoutBuilder(
-            builder: (ctx, bc) {
-              final w     = bc.maxWidth;
-              final fSize = w < 340 ? 10.0 : (w < 420 ? 11.0 : 12.0);
-              final lSize = w < 340 ?  9.5 : (w < 420 ? 10.5 : 11.0);
-              // ارتفاع موحّد لجميع حقول الإدخال — يُستخدم في كل خلية
-              const fldH  = 36.0;
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
 
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-
-                    // ══════════════════════════════════════════════════════════
-                    // ① رقم التسلسل — مثبّت في المنتصف عمودياً
-                    // ══════════════════════════════════════════════════════════
-                    Padding(
-                      padding: EdgeInsets.only(
-                        bottom: (fldH - 22) / 2,   // يتوسّط مع الحقول
-                      ),
-                      child: _seqBadge(fSize),
-                    ),
-                    const SizedBox(width: 6),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ② المادة flex 30 — التسمية Bold خارج الحقل + حقل بارتفاع fldH
-                    // ══════════════════════════════════════════════════════════
-                    Expanded(
-                      flex: 30,
-                      child: _col(
-                        label: 'المادة',
-                        lSize: lSize,
-                        child: _materialInput(sel, fSize, fldH),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ③ الكمية flex 9
-                    // ══════════════════════════════════════════════════════════
-                    Expanded(
-                      flex: 9,
-                      child: _col(
-                        label: 'الكمية',
-                        lSize: lSize,
-                        child: _numInput(
-                          ctrl: widget.rowCtrl.qtyCtrl,
-                          hint: '0',
-                          fSize: fSize,
-                          fldH: fldH,
-                          onChanged: widget.onChanged,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ④ السعر flex 14
-                    // ══════════════════════════════════════════════════════════
-                    Expanded(
-                      flex: 14,
-                      child: _col(
-                        label: 'السعر',
-                        lSize: lSize,
-                        child: _numInput(
-                          ctrl: widget.rowCtrl.priceCtrl,
-                          hint: '0',
-                          fSize: fSize,
-                          fldH: fldH,
-                          onChanged: widget.onChanged,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ⑤ الإجمالي flex 16
-                    // ══════════════════════════════════════════════════════════
-                    Expanded(
-                      flex: 16,
-                      child: _col(
-                        label: 'الإجمالي',
-                        lSize: lSize,
-                        child: _totalInput(
-                          widget.rowCtrl.lineTotal,
-                          fSize, fldH,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ⑥ المخزون flex 13
-                    // ══════════════════════════════════════════════════════════
-                    Expanded(
-                      flex: 13,
-                      child: _col(
-                        label: 'المخزون',
-                        lSize: lSize,
-                        child: _stockInput(
-                          sBg, sBdr, sClr, sIco, sQty,
-                          fSize, fldH,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-
-                    // ══════════════════════════════════════════════════════════
-                    // ⑦ أزرار ▲ ▼ ✕ — محاذاة أسفل مع الحقول
-                    // ══════════════════════════════════════════════════════════
-                    _actionButtons(fldH),
-                  ],
+                // ① sequence badge — offset-top so it aligns with field centre
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: widget.showHeader
+                        ? (lSize + 4 + (fldH - 22) / 2)
+                        : (fldH - 22) / 2,
+                  ),
+                  child: _seqBadge(fSize),
                 ),
-              );
-            },
+                const SizedBox(width: 6),
+
+                // ② columns area — header row (first item only) + fields row
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+
+                      // ── header row — shown ONLY for the first item row ──────
+                      if (widget.showHeader)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Expanded(flex: 30, child: _hdr('المادة', lSize)),
+                              const SizedBox(width: 4),
+                              Expanded(flex: 9,  child: _hdr('الكمية', lSize)),
+                              const SizedBox(width: 4),
+                              Expanded(flex: 14, child: _hdr('السعر', lSize)),
+                              const SizedBox(width: 4),
+                              Expanded(flex: 16, child: _hdr('الإجمالي', lSize)),
+                              const SizedBox(width: 4),
+                              Expanded(flex: 13, child: _hdr('المخزون', lSize)),
+                              const SizedBox(width: 4),
+                              SizedBox(width: btnsW), // placeholder — aligns with buttons
+                            ],
+                          ),
+                        ),
+
+                      // ── fields row ──────────────────────────────────────────
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(flex: 30, child: _materialInput(sel, fSize, fldH)),
+                          const SizedBox(width: 4),
+                          Expanded(flex: 9,  child: _numInput(ctrl: widget.rowCtrl.qtyCtrl,   hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                          const SizedBox(width: 4),
+                          Expanded(flex: 14, child: _numInput(ctrl: widget.rowCtrl.priceCtrl, hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                          const SizedBox(width: 4),
+                          Expanded(flex: 16, child: _totalInput(widget.rowCtrl.lineTotal, fSize, fldH)),
+                          const SizedBox(width: 4),
+                          Expanded(flex: 13, child: _stockInput(sBg, sBdr, sClr, sIco, sQty, fSize, fldH)),
+                          const SizedBox(width: 4),
+                          _actionRow(fldH, btnW),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
 
-          // قائمة البحث المنسدلة
+          // ── search dropdown ─────────────────────────────────────────────────
           if (_showSearch)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
@@ -2403,10 +2362,20 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // مساعد: عمود = تسمية Bold + حقل — التسمية دائماً خارج الحقل
-  // ══════════════════════════════════════════════════════════════════════════════
-  // ── دائرة التسلسل ────────────────────────────────────────────────────────────
+  // ── header label (bold, centred) — shown once above all fields ──────────────
+  Widget _hdr(String label, double lSize) {
+    return Text(
+      label,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        fontSize: lSize,
+        fontWeight: FontWeight.bold,
+        color: AppTheme.textDark,
+      ),
+    );
+  }
+
+  // ── sequence badge ───────────────────────────────────────────────────────────
   Widget _seqBadge(double fSize) {
     return Container(
       width: 22, height: 22,
@@ -2416,7 +2385,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       ),
       alignment: Alignment.center,
       child: Text(
-        '${widget.rowCtrl.sequence}',
+        '\${widget.rowCtrl.sequence}',
         style: TextStyle(
           fontSize: fSize - 1,
           fontWeight: FontWeight.bold,
@@ -2426,30 +2395,6 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  Widget _col({
-    required String label,
-    required double lSize,
-    required Widget child,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: lSize,
-            fontWeight: FontWeight.bold,
-            color: AppTheme.textDark,
-          ),
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 4),
-        child,
-      ],
-    );
-  }
 
   // ══════════════════════════════════════════════════════════════════════════════
   // حقل المادة — ارتفاع fldH مثل باقي الحقول
@@ -2614,64 +2559,33 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
   // ── أزرار التحريك والحذف ──────────────────────────────────────────────────────
   // fldH: ارتفاع الحقول — تُضاف إليه ارتفاع التسمية (lSize + 4) لتوسيط الأزرار
-  Widget _actionButtons(double fldH) {
-    // المجموع الكلي لعمود التسمية + الحقل = (lSize≈11 + 4 gap) + fldH ≈ 55px
-    // الأزرار الثلاثة = 3×22 + 2×2 = 70px — نوسّطها مع محور الحقول
-    return Column(
+  // ── horizontal square buttons [\u25b2][\u25bc][\u2715] ─────────────────────────────────────────
+  Widget _actionRow(double fldH, double btnW) {
+    return Row(
       mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        _tinyBtn(
-          icon: Icons.keyboard_arrow_up_rounded,
-          color: const Color(0xFF5C6BC0),
-          enabled: widget.canMoveUp,
-          onTap: widget.onMoveUp,
-        ),
-        const SizedBox(height: 2),
-        _tinyBtn(
-          icon: Icons.keyboard_arrow_down_rounded,
-          color: const Color(0xFF5C6BC0),
-          enabled: widget.canMoveDown,
-          onTap: widget.onMoveDown,
-        ),
-        const SizedBox(height: 2),
-        _tinyBtn(
-          icon: Icons.close_rounded,
-          color: AppTheme.errorColor,
-          enabled: widget.canDelete,
-          onTap: widget.canDelete ? widget.onDelete : () {},
-        ),
+        _sqBtn(Icons.keyboard_arrow_up_rounded,   const Color(0xFF5C6BC0), widget.canMoveUp,   widget.onMoveUp,                           fldH, btnW),
+        const SizedBox(width: 3),
+        _sqBtn(Icons.keyboard_arrow_down_rounded, const Color(0xFF5C6BC0), widget.canMoveDown, widget.onMoveDown,                         fldH, btnW),
+        const SizedBox(width: 3),
+        _sqBtn(Icons.close_rounded,               AppTheme.errorColor,     widget.canDelete,   widget.canDelete ? widget.onDelete : () {}, fldH, btnW),
       ],
     );
   }
 
-  // ── زر صغير 22×22 ────────────────────────────────────────────────────────────
-  Widget _tinyBtn({
-    required IconData icon,
-    required Color color,
-    required bool enabled,
-    required VoidCallback onTap,
-  }) {
+  Widget _sqBtn(IconData icon, Color color, bool enabled, VoidCallback onTap, double fldH, double btnW) {
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 22, height: 22,
+        width: btnW, height: fldH,
         decoration: BoxDecoration(
-          color: enabled
-              ? color.withValues(alpha: 0.10)
-              : Colors.grey.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(5),
+          color: enabled ? color.withValues(alpha: 0.10) : Colors.grey.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: enabled
-                ? color.withValues(alpha: 0.35)
-                : Colors.grey.withValues(alpha: 0.15),
+            color: enabled ? color.withValues(alpha: 0.35) : Colors.grey.withValues(alpha: 0.15),
           ),
         ),
-        child: Icon(
-          icon,
-          size: 14,
-          color: enabled ? color : Colors.grey.shade300,
-        ),
+        child: Icon(icon, size: fldH * 0.50, color: enabled ? color : Colors.grey.shade300),
       ),
     );
   }
