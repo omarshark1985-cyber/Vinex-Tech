@@ -192,7 +192,7 @@ class InvoicePdfGenerator {
         margin: pw.EdgeInsets.zero,
         buildBackground: (_) => pw.Container(color: _white),
       ),
-      header: (ctx) => _buildHeader(logo, invNum, invoice, ctx),
+      header: (ctx) => _buildHeader(logo, invNum, dateStr, invoice, ctx),
       footer: (ctx) => _buildFooter(ctx),
       build:  (_) => buildWidgets,
     ));
@@ -206,7 +206,7 @@ class InvoicePdfGenerator {
   // HEADER  (page 1 = full, pages 2+ = mini continuation)
   // ══════════════════════════════════════════════════════════════════════════
   static pw.Widget _buildHeader(pw.MemoryImage? logo, String invNum,
-      Invoice invoice, pw.Context ctx) {
+      String dateStr, Invoice invoice, pw.Context ctx) {
     final gradient = const pw.BoxDecoration(
       gradient: pw.LinearGradient(
         colors: [_hdrLeft, _hdrRight],
@@ -279,25 +279,53 @@ class InvoicePdfGenerator {
         ),
       );
     } else {
-      // ── Mini continuation header ─────────────────────────────────────────
+      // ── Mini continuation header (with repeated invoice info) ─────────────
       return pw.Container(
         width: double.infinity,
         padding: pw.EdgeInsets.symmetric(
             horizontal: _hdrPadH, vertical: _contHdrPadV),
         decoration: gradient,
-        child: pw.Row(children: [
-          pw.Text('VINEX TECHNOLOGY',
-              style: pw.TextStyle(color: _white, fontSize: 13,
-                  fontWeight: pw.FontWeight.bold, letterSpacing: 1.5)),
-          pw.Spacer(),
-          pw.Text(
-            '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum'
-            '  —  Continued (Page ${ctx.pageNumber} / ${ctx.pagesCount})',
-            style: pw.TextStyle(
-                color: const PdfColor(1, 1, 1, 0.85), fontSize: 9,
-                fontWeight: pw.FontWeight.bold, letterSpacing: 0.5),
-          ),
-        ]),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            // Row 1: company name + page indicator
+            pw.Row(children: [
+              pw.Text('VINEX TECHNOLOGY',
+                  style: pw.TextStyle(color: _white, fontSize: 12,
+                      fontWeight: pw.FontWeight.bold, letterSpacing: 1.5)),
+              pw.Spacer(),
+              pw.Text(
+                '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum'
+                '  —  Continued (Page ${ctx.pageNumber} / ${ctx.pagesCount})',
+                style: pw.TextStyle(
+                    color: const PdfColor(1, 1, 1, 0.85), fontSize: 8,
+                    fontWeight: pw.FontWeight.bold, letterSpacing: 0.5),
+              ),
+            ]),
+            pw.SizedBox(height: 5 * _s),
+            // Row 2: customer name | invoice # | date | items count
+            pw.Container(
+              padding: pw.EdgeInsets.symmetric(
+                  horizontal: 8 * _s, vertical: 4 * _s),
+              decoration: pw.BoxDecoration(
+                color: const PdfColor(1, 1, 1, 0.12),
+                borderRadius: pw.BorderRadius.circular(4 * _s),
+              ),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  _contInfoCell('Customer', invoice.customerName),
+                  _contDivider(),
+                  _contInfoCell('Invoice No.', '#$invNum'),
+                  _contDivider(),
+                  _contInfoCell('Date', dateStr),
+                  _contDivider(),
+                  _contInfoCell('Items', '${invoice.items.length} item(s)'),
+                ],
+              ),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -622,11 +650,11 @@ class InvoicePdfGenerator {
           horizontal: _totPadH, vertical: _totPadV),
       child: pw.Row(children: [
         pw.Expanded(child: pw.Text(label,
-            style: pw.TextStyle(fontSize: 10, color: labelColor,
+            style: pw.TextStyle(fontSize: 9, color: labelColor,
                 fontWeight:
                     bold ? pw.FontWeight.bold : pw.FontWeight.normal))),
         pw.Text(value,
-            style: pw.TextStyle(fontSize: 11, color: valueColor,
+            style: pw.TextStyle(fontSize: 10, color: valueColor,
                 fontWeight: pw.FontWeight.bold)),
       ]),
     );
@@ -648,16 +676,47 @@ class InvoicePdfGenerator {
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text('NOTES',
-              style: pw.TextStyle(fontSize: 10,
+              style: pw.TextStyle(fontSize: 9,
                   fontWeight: pw.FontWeight.bold,
                   color: _brown, letterSpacing: 1)),
           pw.SizedBox(height: 5 * _s),
           pw.Text(notes,
-              style: pw.TextStyle(fontSize: 11,
+              style: pw.TextStyle(fontSize: 10,
                   fontWeight: pw.FontWeight.bold,
                   color: _dark, lineSpacing: 2)),
         ],
       ),
+    );
+  }
+
+  // ── Helpers for continuation header info bar ──────────────────────────────
+  // A small two-line cell: grey label on top, white value below
+  static pw.Widget _contInfoCell(String label, String value) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(label,
+            style: pw.TextStyle(
+                fontSize: 7,
+                color: const PdfColor(1, 1, 1, 0.65),
+                letterSpacing: 0.3)),
+        pw.SizedBox(height: 1.5),
+        pw.Text(value,
+            style: pw.TextStyle(
+                fontSize: 8,
+                color: _white,
+                fontWeight: pw.FontWeight.bold)),
+      ],
+    );
+  }
+
+  // Thin vertical separator between info cells
+  static pw.Widget _contDivider() {
+    return pw.Container(
+      width: 0.6,
+      height: 24 * _s,
+      margin: pw.EdgeInsets.symmetric(horizontal: 8 * _s),
+      color: const PdfColor(1, 1, 1, 0.3),
     );
   }
 }
