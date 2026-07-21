@@ -149,18 +149,13 @@ class InvoicePdfGenerator {
     ));
     buildWidgets.add(pw.SizedBox(height: _sectionGap));
 
-    // Head chunks — each preceded by a NewPage (except first) + info cards repeat
+    // Head chunks — each preceded by a NewPage (except first).
+    // No info cards on continuation pages — mirrors Flutter (showInfoRow: p == 0 only)
     int globalOffset = 0;
     for (int i = 0; i < headChunks.length; i++) {
       final chunk = headChunks[i];
       if (i > 0) {
         buildWidgets.add(pw.NewPage());
-        // Repeat BILL TO + INVOICE DETAILS at top of every continuation page
-        buildWidgets.add(pw.Padding(
-          padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
-          child: _buildInfoRow(invoice, invNum, dateStr),
-        ));
-        buildWidgets.add(pw.SizedBox(height: _sectionGap));
       }
       buildWidgets.add(pw.Padding(
         padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
@@ -173,12 +168,6 @@ class InvoicePdfGenerator {
     // Tail chunk + totals + notes — in a pw.Container so MultiPage won't split
     if (headChunks.isNotEmpty) {
       buildWidgets.add(pw.NewPage());
-      // Repeat BILL TO + INVOICE DETAILS on last page too
-      buildWidgets.add(pw.Padding(
-        padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
-        child: _buildInfoRow(invoice, invNum, dateStr),
-      ));
-      buildWidgets.add(pw.SizedBox(height: _sectionGap));
     }
     buildWidgets.add(pw.Padding(
       padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
@@ -493,7 +482,7 @@ class InvoicePdfGenerator {
       child: pw.Align(
         alignment: hAligns[i],
         child: pw.Text(headers[i],
-            style: pw.TextStyle(color: _white, fontSize: 9,
+            style: pw.TextStyle(color: _white, fontSize: 11,
                 fontWeight: pw.FontWeight.bold, letterSpacing: 0.5)),
       ),
     );
@@ -523,7 +512,7 @@ class InvoicePdfGenerator {
           child: pw.Align(
             alignment: hAligns[c],
             child: pw.Text(cells[c],
-                style: pw.TextStyle(fontSize: 9, color: _dark)),
+                style: pw.TextStyle(fontSize: 11, color: _dark)),
           ),
         )),
       );
