@@ -1175,11 +1175,23 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
     setState(() {
       _rows[index].dispose();
       _rows.removeAt(index);
-      // Re-sequence
-      for (int i = 0; i < _rows.length; i++) {
-        _rows[i].sequence = i + 1;
-      }
+      _resequence();
     });
+  }
+
+  void _moveRow(int from, int to) {
+    if (to < 0 || to >= _rows.length) return;
+    setState(() {
+      final row = _rows.removeAt(from);
+      _rows.insert(to, row);
+      _resequence();
+    });
+  }
+
+  void _resequence() {
+    for (int i = 0; i < _rows.length; i++) {
+      _rows[i].sequence = i + 1;
+    }
   }
 
   double get _subtotal => _rows.fold(0.0, (sum, r) => sum + r.lineTotal);
@@ -1600,6 +1612,10 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                               canDelete: _rows.length > 1,
                               onDelete: () => _removeRow(i),
                               onChanged: () => setState(() {}),
+                              canMoveUp: i > 0,
+                              canMoveDown: i < _rows.length - 1,
+                              onMoveUp: () => _moveRow(i, i - 1),
+                              onMoveDown: () => _moveRow(i, i + 1),
                             ),
                           ),
 
@@ -2129,6 +2145,7 @@ class _ItemRowController {
   }
 }
 
+
 // ─── Item Row Widget ──────────────────────────────────────────────────────────
 class _ItemRowWidget extends StatefulWidget {
   final _ItemRowController rowCtrl;
@@ -2136,6 +2153,10 @@ class _ItemRowWidget extends StatefulWidget {
   final bool canDelete;
   final VoidCallback onDelete;
   final VoidCallback onChanged;
+  final bool canMoveUp;
+  final bool canMoveDown;
+  final VoidCallback onMoveUp;
+  final VoidCallback onMoveDown;
 
   const _ItemRowWidget({
     required this.rowCtrl,
@@ -2143,6 +2164,10 @@ class _ItemRowWidget extends StatefulWidget {
     required this.canDelete,
     required this.onDelete,
     required this.onChanged,
+    required this.canMoveUp,
+    required this.canMoveDown,
+    required this.onMoveUp,
+    required this.onMoveDown,
   });
 
   @override
@@ -2150,16 +2175,71 @@ class _ItemRowWidget extends StatefulWidget {
 }
 
 class _ItemRowWidgetState extends State<_ItemRowWidget> {
+  // Search overlay
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
+  bool _showSearch = false;
+  List<InventoryItem> _filtered = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _filtered = widget.inventoryItems;
+    _searchFocus.addListener(() {
+      if (!_searchFocus.hasFocus && _showSearch) {
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (mounted) setState(() => _showSearch = false);
+        });
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(_ItemRowWidget old) {
+    super.didUpdateWidget(old);
+    if (old.inventoryItems != widget.inventoryItems) {
+      _applySearch(_searchCtrl.text);
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _applySearch(String q) {
+    setState(() {
+      _filtered = q.isEmpty
+          ? widget.inventoryItems
+          : widget.inventoryItems
+              .where((it) => it.itemName.toLowerCase().contains(q.toLowerCase()))
+              .toList();
+    });
+  }
+
+  void _selectItem(InventoryItem item) {
+    setState(() {
+      widget.rowCtrl.selectedItem = item;
+      widget.rowCtrl.priceCtrl.text = item.unitPrice.toStringAsFixed(0);
+      _showSearch = false;
+      _searchCtrl.clear();
+      _filtered = widget.inventoryItems;
+    });
+    _searchFocus.unfocus();
+    widget.onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedItem = widget.rowCtrl.selectedItem;
     final mq = MediaQuery.of(context).size;
-    // حجم حقل الإدخال يتناسب مع عرض الشاشة
     final fieldH   = mq.width < 360 ? 36.0 : (mq.width < 480 ? 40.0 : 44.0);
     final fontSize = mq.width < 360 ? 13.0 : 14.0;
     final labelFS  = mq.width < 360 ? 12.0 : 13.0;
 
-    // ألوان مؤشر المخزون
+    // مؤشر المخزون
     Color stockBg    = Colors.grey.shade50;
     Color stockBdr   = Colors.grey.shade200;
     Color stockColor = AppTheme.textGrey;
@@ -2186,7 +2266,6 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 5),
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
@@ -2195,248 +2274,434 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── السطر الأول: رقم التسلسل + قائمة المادة + زر حذف ──
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // رقم التسلسل
-              Container(
-                width: 22, height: 22,
-                decoration: BoxDecoration(
-                  color: AppTheme.salesColor.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '${widget.rowCtrl.sequence}',
-                  style: TextStyle(
-                    fontSize: labelFS,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.salesColor,
+          // ── شريط أعلى الصف: تسلسل + أزرار التحريك + حذف ──────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(10, 6, 6, 0),
+            child: Row(
+              children: [
+                // رقم التسلسل
+                Container(
+                  width: 24, height: 24,
+                  decoration: BoxDecoration(
+                    color: AppTheme.salesColor.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${widget.rowCtrl.sequence}',
+                    style: TextStyle(
+                      fontSize: labelFS,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.salesColor,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              // قائمة اختيار المادة
-              Expanded(
-                child: SizedBox(
-                  height: fieldH + 2,
-                  child: widget.inventoryItems.isEmpty
-                      ? Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'لا توجد مواد في المخزن',
-                            style: TextStyle(fontSize: fontSize, color: AppTheme.textGrey),
-                          ),
-                        )
-                      : DropdownButtonFormField<InventoryItem>(
-                          initialValue: selectedItem,
-                          isExpanded: true,
-                          menuMaxHeight: 240,
-                          decoration: InputDecoration(
-                            hintText: 'اختر المادة من القائمة',
-                            hintStyle: TextStyle(
-                              fontSize: fontSize,
-                              fontWeight: FontWeight.w500,
-                              color: AppTheme.textGrey,
-                            ),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: (fieldH - 20) / 2,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppTheme.divider),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppTheme.divider),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppTheme.salesColor, width: 2),
-                            ),
-                          ),
-                          style: TextStyle(
-                            fontSize: fontSize,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textDark,
-                          ),
-                          items: widget.inventoryItems
-                              .map((item) => DropdownMenuItem<InventoryItem>(
-                                    value: item,
-                                    child: Text(
-                                      item.itemName,
-                                      style: TextStyle(
-                                        fontSize: fontSize,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ))
-                              .toList(),
-                          onChanged: (item) {
-                            setState(() {
-                              widget.rowCtrl.selectedItem = item;
-                              if (item != null) {
-                                widget.rowCtrl.priceCtrl.text =
-                                    item.unitPrice.toStringAsFixed(0);
-                              }
-                            });
-                            widget.onChanged();
-                          },
-                        ),
+                const SizedBox(width: 8),
+                // اسم المادة المختارة أو placeholder
+                Expanded(
+                  child: Text(
+                    selectedItem?.itemName ?? 'اختر المادة من القائمة',
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: selectedItem != null ? FontWeight.bold : FontWeight.normal,
+                      color: selectedItem != null ? AppTheme.textDark : AppTheme.textGrey,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              // زر الحذف
-              widget.canDelete
-                  ? IconButton(
-                      icon: const Icon(
-                        Icons.remove_circle_outline_rounded,
-                        color: AppTheme.errorColor,
-                        size: 20,
-                      ),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                      onPressed: widget.onDelete,
-                    )
-                  : const SizedBox(width: 28),
-            ],
+                // زر تحريك لأعلى
+                _moveBtn(
+                  icon: Icons.keyboard_arrow_up_rounded,
+                  enabled: widget.canMoveUp,
+                  onTap: widget.onMoveUp,
+                  color: const Color(0xFF5C6BC0),
+                ),
+                // زر تحريك لأسفل
+                _moveBtn(
+                  icon: Icons.keyboard_arrow_down_rounded,
+                  enabled: widget.canMoveDown,
+                  onTap: widget.onMoveDown,
+                  color: const Color(0xFF5C6BC0),
+                ),
+                // زر حذف
+                widget.canDelete
+                    ? IconButton(
+                        icon: const Icon(
+                          Icons.remove_circle_outline_rounded,
+                          color: AppTheme.errorColor,
+                          size: 20,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                        onPressed: widget.onDelete,
+                      )
+                    : const SizedBox(width: 28),
+              ],
+            ),
           ),
 
-          const SizedBox(height: 6),
-
-          // ── السطر الثاني: الكمية | سعر المفرد | المخزون (متساوية) ──
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // حقل الكمية
-              Expanded(
-                flex: 3,
-                child: _labeledField(
-                  label: 'الكمية',
-                  labelFS: labelFS,
-                  child: _compactField(
-                    widget.rowCtrl.qtyCtrl,
-                    '0',
-                    widget.onChanged,
-                    number: true,
-                    fieldH: fieldH,
-                    fontSize: fontSize,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              // حقل سعر المفرد
-              Expanded(
-                flex: 4,
-                child: _labeledField(
-                  label: 'سعر المفرد',
-                  labelFS: labelFS,
-                  child: _compactField(
-                    widget.rowCtrl.priceCtrl,
-                    '0',
-                    widget.onChanged,
-                    number: true,
-                    fieldH: fieldH,
-                    fontSize: fontSize,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              // مؤشر المخزون
-              Expanded(
-                flex: 4,
-                child: _labeledField(
-                  label: 'المخزون',
-                  labelFS: labelFS,
+          // ── حقل البحث + اختيار المادة ─────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // زر فتح البحث
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _showSearch = !_showSearch;
+                      _filtered = widget.inventoryItems;
+                      _searchCtrl.clear();
+                    });
+                    if (!_showSearch) {
+                      _searchFocus.unfocus();
+                    } else {
+                      Future.delayed(const Duration(milliseconds: 80),
+                          () => _searchFocus.requestFocus());
+                    }
+                  },
                   child: Container(
                     height: fieldH,
-                    width: double.infinity,
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
-                      color: stockBg,
+                      border: Border.all(
+                        color: _showSearch
+                            ? AppTheme.salesColor
+                            : const Color(0xFFDDE1EA),
+                        width: _showSearch ? 2 : 1,
+                      ),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: stockBdr),
+                      color: _showSearch
+                          ? AppTheme.salesColor.withValues(alpha: 0.04)
+                          : const Color(0xFFF9FAFB),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    child: Row(
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(stockIcon, size: 11, color: stockColor),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                stockQty,
-                                style: TextStyle(
-                                  fontSize: labelFS,
-                                  fontWeight: FontWeight.w700,
-                                  color: stockColor,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
+                        Icon(
+                          Icons.search_rounded,
+                          size: 16,
+                          color: _showSearch ? AppTheme.salesColor : AppTheme.textGrey,
                         ),
-                        if (stockLabel != null)
-                          Text(
-                            stockLabel,
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            selectedItem != null
+                                ? 'تغيير المادة...'
+                                : 'ابحث واختر المادة من المخزن',
                             style: TextStyle(
-                              fontSize: labelFS - 1,
-                              fontWeight: FontWeight.bold,
-                              color: stockColor,
+                              fontSize: fontSize - 1,
+                              color: AppTheme.textGrey,
                             ),
-                            textAlign: TextAlign.center,
                           ),
+                        ),
+                        Icon(
+                          _showSearch
+                              ? Icons.expand_less_rounded
+                              : Icons.expand_more_rounded,
+                          size: 18,
+                          color: AppTheme.textGrey,
+                        ),
                       ],
                     ),
                   ),
                 ),
-              ),
-            ],
+
+                // قائمة البحث المنسدلة
+                if (_showSearch) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.4)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // حقل البحث
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: TextField(
+                            controller: _searchCtrl,
+                            focusNode: _searchFocus,
+                            onChanged: _applySearch,
+                            style: TextStyle(fontSize: fontSize),
+                            decoration: InputDecoration(
+                              hintText: 'ابحث باسم المادة...',
+                              hintStyle: TextStyle(fontSize: fontSize - 1),
+                              prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                              suffixIcon: _searchCtrl.text.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear, size: 16),
+                                      onPressed: () {
+                                        _searchCtrl.clear();
+                                        _applySearch('');
+                                      },
+                                    )
+                                  : null,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(
+                                    color: AppTheme.salesColor.withValues(alpha: 0.4)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                    color: AppTheme.salesColor, width: 1.5),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        // نتائج البحث
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          child: _filtered.isEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Text(
+                                    'لا توجد نتائج',
+                                    style: TextStyle(
+                                        fontSize: fontSize - 1,
+                                        color: AppTheme.textGrey),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                )
+                              : ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: _filtered.length,
+                                  itemBuilder: (_, idx) {
+                                    final item = _filtered[idx];
+                                    final isSelected =
+                                        widget.rowCtrl.selectedItem?.id == item.id;
+                                    final hasStock = item.quantity > 0;
+                                    return InkWell(
+                                      onTap: () => _selectItem(item),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? AppTheme.salesColor.withValues(alpha: 0.08)
+                                              : Colors.transparent,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            // اسم المادة
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    item.itemName,
+                                                    style: TextStyle(
+                                                      fontSize: fontSize,
+                                                      fontWeight: isSelected
+                                                          ? FontWeight.bold
+                                                          : FontWeight.w500,
+                                                      color: AppTheme.textDark,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    'سعر البيع: ${item.unitPrice.toStringAsFixed(0)} IQD',
+                                                    style: TextStyle(
+                                                      fontSize: fontSize - 2,
+                                                      color: AppTheme.textGrey,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            // مؤشر المخزون في القائمة
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 7, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: hasStock
+                                                    ? Colors.green.shade50
+                                                    : Colors.red.shade50,
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                                border: Border.all(
+                                                  color: hasStock
+                                                      ? Colors.green.shade300
+                                                      : Colors.red.shade300,
+                                                ),
+                                              ),
+                                              child: Text(
+                                                '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                                                style: TextStyle(
+                                                  fontSize: fontSize - 2,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: hasStock
+                                                      ? Colors.green.shade700
+                                                      : Colors.red.shade700,
+                                                ),
+                                              ),
+                                            ),
+                                            if (isSelected) ...[
+                                              const SizedBox(width: 6),
+                                              Icon(Icons.check_circle_rounded,
+                                                  size: 16,
+                                                  color: AppTheme.salesColor),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
 
           const SizedBox(height: 6),
-
-          // ── السطر الثالث: الإجمالي ──
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: AppTheme.salesColor.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(8),
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'الإجمالي:',
-                  style: TextStyle(
-                    fontSize: fontSize,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textGrey,
+                // حقل الكمية
+                Expanded(
+                  flex: 3,
+                  child: _labeledField(
+                    label: 'الكمية',
+                    labelFS: labelFS,
+                    child: _compactField(
+                      widget.rowCtrl.qtyCtrl,
+                      '0',
+                      widget.onChanged,
+                      number: true,
+                      fieldH: fieldH,
+                      fontSize: fontSize,
+                    ),
                   ),
                 ),
-                Text(
-                  CurrencyHelper.format(widget.rowCtrl.lineTotal),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: fontSize + 1,
-                    color: AppTheme.salesColor,
+                const SizedBox(width: 6),
+                // حقل السعر
+                Expanded(
+                  flex: 4,
+                  child: _labeledField(
+                    label: 'سعر المفرد',
+                    labelFS: labelFS,
+                    child: _compactField(
+                      widget.rowCtrl.priceCtrl,
+                      '0',
+                      widget.onChanged,
+                      number: true,
+                      fieldH: fieldH,
+                      fontSize: fontSize,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // مؤشر المخزون
+                Expanded(
+                  flex: 4,
+                  child: _labeledField(
+                    label: 'المخزون',
+                    labelFS: labelFS,
+                    child: Container(
+                      height: fieldH,
+                      width: double.infinity,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: stockBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: stockBdr),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(stockIcon, size: 11, color: stockColor),
+                              const SizedBox(width: 2),
+                              Flexible(
+                                child: Text(
+                                  stockQty,
+                                  style: TextStyle(
+                                    fontSize: labelFS,
+                                    fontWeight: FontWeight.w700,
+                                    color: stockColor,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (stockLabel != null)
+                            Text(
+                              stockLabel,
+                              style: TextStyle(
+                                fontSize: labelFS - 1,
+                                fontWeight: FontWeight.bold,
+                                color: stockColor,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ],
+            ),
+          ),
+
+          const SizedBox(height: 6),
+          // الإجمالي
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppTheme.salesColor.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'الإجمالي:',
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textGrey,
+                    ),
+                  ),
+                  Text(
+                    CurrencyHelper.format(widget.rowCtrl.lineTotal),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: fontSize + 1,
+                      color: AppTheme.salesColor,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -2444,7 +2709,38 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  /// مساعد: عنوان + حقل بالاسفل
+  Widget _moveBtn({
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 26,
+        height: 26,
+        margin: const EdgeInsets.symmetric(horizontal: 1),
+        decoration: BoxDecoration(
+          color: enabled
+              ? color.withValues(alpha: 0.10)
+              : Colors.grey.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: enabled
+                ? color.withValues(alpha: 0.35)
+                : Colors.grey.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled ? color : Colors.grey.shade400,
+        ),
+      ),
+    );
+  }
+
   Widget _labeledField({
     required String label,
     required double labelFS,
@@ -2468,7 +2764,6 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  /// حقل إدخال مضغوط متجاوب مع حجم الشاشة
   Widget _compactField(
     TextEditingController ctrl,
     String hint,
