@@ -302,14 +302,14 @@ class InvoicePdfGenerator {
             // Row 1: company name + page indicator
             pw.Row(children: [
               pw.Text('VINEX TECHNOLOGY',
-                  style: pw.TextStyle(color: _white, fontSize: 12,
+                  style: pw.TextStyle(color: _white, fontSize: 13,
                       fontWeight: pw.FontWeight.bold, letterSpacing: 1.5)),
               pw.Spacer(),
               pw.Text(
                 '${invoice.isQuote ? "QUOTATION" : "INVOICE"} #$invNum'
                 '  —  Continued (Page ${ctx.pageNumber} / ${ctx.pagesCount})',
                 style: pw.TextStyle(
-                    color: const PdfColor(1, 1, 1, 0.85), fontSize: 8,
+                    color: const PdfColor(1, 1, 1, 0.85), fontSize: 9,
                     fontWeight: pw.FontWeight.bold, letterSpacing: 0.5),
               ),
             ]),
@@ -661,11 +661,11 @@ class InvoicePdfGenerator {
           horizontal: _totPadH, vertical: _totPadV),
       child: pw.Row(children: [
         pw.Expanded(child: pw.Text(label,
-            style: pw.TextStyle(fontSize: 9, color: labelColor,
+            style: pw.TextStyle(fontSize: 10, color: labelColor,
                 fontWeight:
                     bold ? pw.FontWeight.bold : pw.FontWeight.normal))),
         pw.Text(value,
-            style: pw.TextStyle(fontSize: 10, color: valueColor,
+            style: pw.TextStyle(fontSize: 11, color: valueColor,
                 fontWeight: pw.FontWeight.bold)),
       ]),
     );
@@ -687,12 +687,12 @@ class InvoicePdfGenerator {
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text('NOTES',
-              style: pw.TextStyle(fontSize: 9,
+              style: pw.TextStyle(fontSize: 10,
                   fontWeight: pw.FontWeight.bold,
                   color: _brown, letterSpacing: 1)),
           pw.SizedBox(height: 5 * _s),
           pw.Text(notes,
-              style: pw.TextStyle(fontSize: 10,
+              style: pw.TextStyle(fontSize: 11,
                   fontWeight: pw.FontWeight.bold,
                   color: _dark, lineSpacing: 2)),
         ],
