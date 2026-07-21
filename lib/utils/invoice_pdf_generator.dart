@@ -102,17 +102,89 @@ class InvoicePdfGenerator {
 
     final pdf = pw.Document(compress: true);
 
-    // ── Orphan-totals guard (mirrors _paginate() in invoice_detail_screen.dart)
-    // Keep the last 2 items together with the totals/notes block using
-    // pw.KeepTogether, so the totals never floats alone on a fresh page.
-    final allItems  = invoice.items;
-    final keepCount = allItems.length >= 2 ? 2 : allItems.length; // rows kept with totals
-    final headItems = allItems.length > keepCount
-        ? allItems.sublist(0, allItems.length - keepCount)
-        : <InvoiceItem>[];
-    final tailItems = allItems.length > keepCount
-        ? allItems.sublist(allItems.length - keepCount)
-        : allItems;
+    // ── Hard cap: max 16 rows per page (mirrors Flutter _maxRowsPerPage) ────
+    const int maxRows = 16;
+    final allItems = invoice.items;
+
+    // Chunk items into pages of ≤ maxRows.
+    // The LAST chunk always includes totals + notes (kept together).
+    // We determine how many rows belong to the "tail" chunk:
+    //   – if total items ≤ maxRows → 1 chunk (all items + totals on page 1)
+    //   – otherwise → head chunks of maxRows + tail chunk of remainder (≥1, ≤maxRows)
+    // Orphan guard: tail chunk must have ≥ 2 rows unless there's only 1 item total.
+    List<List<InvoiceItem>> chunks = [];
+    int start = 0;
+    while (start < allItems.length) {
+      final end = (start + maxRows).clamp(0, allItems.length);
+      chunks.add(allItems.sublist(start, end));
+      start = end;
+    }
+    if (chunks.isEmpty) chunks.add([]);
+
+    // Orphan-totals guard for PDF (same logic as Flutter _paginate):
+    // ensure last chunk has ≥ 2 items so totals is never visually alone.
+    while (chunks.length >= 2 &&
+        chunks.last.length < 2 &&
+        chunks[chunks.length - 2].length > 1) {
+      final prev   = List<InvoiceItem>.from(chunks[chunks.length - 2]);
+      final stolen = prev.removeLast();
+      chunks[chunks.length - 2] = prev;
+      chunks[chunks.length - 1] = [stolen, ...chunks.last];
+    }
+
+    // Head chunks: rendered as SpanningWidget tables (MultiPage can still
+    // reflow them, but each chunk already fits ≤ maxRows so no splitting occurs).
+    // Tail chunk: wrapped in pw.Container (non-spanning) to keep it together
+    // with the totals + notes block on the same page.
+    final headChunks = chunks.length > 1 ? chunks.sublist(0, chunks.length - 1) : <List<InvoiceItem>>[];
+    final tailChunk  = chunks.last;
+
+    // Build the list of widgets for MultiPage.build
+    final List<pw.Widget> buildWidgets = [];
+
+    // Info row (page 1 only)
+    buildWidgets.add(pw.Padding(
+      padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
+      child: _buildInfoRow(invoice, invNum, dateStr),
+    ));
+    buildWidgets.add(pw.SizedBox(height: _sectionGap));
+
+    // Head chunks — each with a NewPage separator before it (except the very first)
+    int globalOffset = 0;
+    for (int i = 0; i < headChunks.length; i++) {
+      final chunk = headChunks[i];
+      if (i > 0) {
+        // Force new page before each subsequent head chunk
+        buildWidgets.add(pw.NewPage());
+      }
+      buildWidgets.add(pw.Padding(
+        padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+        child: _buildItemsTable(chunk,
+            isHead: i == 0, globalOffset: globalOffset),
+      ));
+      globalOffset += chunk.length;
+    }
+
+    // Tail chunk + totals + notes — in a pw.Container so MultiPage won't split
+    if (headChunks.isNotEmpty) {
+      buildWidgets.add(pw.NewPage());
+    }
+    buildWidgets.add(pw.Padding(
+      padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
+      child: pw.Container(
+        child: pw.Column(children: [
+          _buildItemsTable(tailChunk,
+              isHead: headChunks.isEmpty, globalOffset: globalOffset),
+          pw.SizedBox(height: 16 * _s),
+          _buildTotalsRow(invoice),
+          if (invoice.notes.isNotEmpty) ...[
+            pw.SizedBox(height: 12 * _s),
+            _buildNotes(invoice.notes),
+          ],
+        ]),
+      ),
+    ));
+    buildWidgets.add(pw.SizedBox(height: _bdPadBot));
 
     pdf.addPage(pw.MultiPage(
       pageTheme: pw.PageTheme(
@@ -122,37 +194,7 @@ class InvoicePdfGenerator {
       ),
       header: (ctx) => _buildHeader(logo, invNum, invoice, ctx),
       footer: (ctx) => _buildFooter(ctx),
-      build:  (ctx) => [
-        // ── Info row (page 1) ──────────────────────────────────────────────
-        pw.Padding(
-          padding: pw.EdgeInsets.fromLTRB(_bdPadH, _bdPadTop, _bdPadH, 0),
-          child: _buildInfoRow(invoice, invNum, dateStr),
-        ),
-        pw.SizedBox(height: _sectionGap),
-        // ── Head rows (all items except last keepCount) ────────────────────
-        if (headItems.isNotEmpty)
-          pw.Padding(
-            padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
-            child: _buildItemsTable(headItems, isHead: true),
-          ),
-        // ── Tail rows + totals + notes: kept together on same page ─────────
-        pw.Padding(
-          padding: pw.EdgeInsets.symmetric(horizontal: _bdPadH),
-          child: pw.Container(
-            child: pw.Column(children: [
-              _buildItemsTable(tailItems,
-                  isHead: headItems.isEmpty, globalOffset: headItems.length),
-              pw.SizedBox(height: 16 * _s),
-              _buildTotalsRow(invoice),
-              if (invoice.notes.isNotEmpty) ...[
-                pw.SizedBox(height: 12 * _s),
-                _buildNotes(invoice.notes),
-              ],
-            ]),
-          ),
-        ),
-        pw.SizedBox(height: _bdPadBot),
-      ],
+      build:  (_) => buildWidgets,
     ));
     return pdf;
   }

@@ -424,6 +424,8 @@ class _A4PreviewPages extends StatelessWidget {
   });
 
   // ── Calculate how many rows fit on page 1 vs continuation pages ─────────────
+  static const int _maxRowsPerPage = 16; // hard cap: never exceed 16 rows/page
+
   _PaginationResult _paginate() {
     final hasDiscount = invoice.discount > 0;
     final hasDP       = invoice.hasDownPayment;
@@ -447,8 +449,9 @@ class _A4PreviewPages extends StatelessWidget {
         - _bodyPadBott
         - _footerH;
 
-    // How many rows fit on page 1?
-    int rowsPage1 = (usablePage1 / _tableRowH).floor().clamp(1, invoice.items.length);
+    // How many rows fit on page 1? (capped at _maxRowsPerPage)
+    int rowsPage1 = (usablePage1 / _tableRowH).floor()
+        .clamp(1, _maxRowsPerPage);
 
     // Usable body height on continuation pages
     //  = A4H − contHeader − bodyPadVCont − tableHdr − gap(16) − totals(last page) − notes(last page) − footer − bodyPadBott
@@ -461,7 +464,9 @@ class _A4PreviewPages extends StatelessWidget {
         - _bodyPadBott
         - _footerH;
 
-    int rowsContFull = (usableContFull / _tableRowH).floor().clamp(1, 9999);
+    // Capped at _maxRowsPerPage
+    int rowsContFull = (usableContFull / _tableRowH).floor()
+        .clamp(1, _maxRowsPerPage);
 
     // Split items into pages
     List<List<InvoiceItem>> pages = [];
@@ -484,7 +489,9 @@ class _A4PreviewPages extends StatelessWidget {
           - notesHeight
           - _bodyPadBott
           - _footerH;
-      int rowsContLast = (usableContLast / _tableRowH).floor().clamp(1, 9999);
+      // Capped at _maxRowsPerPage
+      int rowsContLast = (usableContLast / _tableRowH).floor()
+          .clamp(1, _maxRowsPerPage);
 
       bool isLastChunk = (start + rowsContLast) >= invoice.items.length;
       int rowsThisPage = isLastChunk ? rowsContLast : rowsContFull;
