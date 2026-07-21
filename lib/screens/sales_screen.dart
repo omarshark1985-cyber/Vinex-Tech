@@ -2147,11 +2147,14 @@ class _ItemRowWidget extends StatefulWidget {
 }
 
 class _ItemRowWidgetState extends State<_ItemRowWidget> {
-  // Search overlay
-  final _searchCtrl = TextEditingController();
+  final _searchCtrl  = TextEditingController();
   final _searchFocus = FocusNode();
+  final _materialKey = GlobalKey(); // anchor for overlay positioning
+
   bool _showSearch = false;
   List<InventoryItem> _filtered = [];
+
+  OverlayEntry? _overlayEntry;
 
   @override
   void initState() {
@@ -2160,7 +2163,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     _searchFocus.addListener(() {
       if (!_searchFocus.hasFocus && _showSearch) {
         Future.delayed(const Duration(milliseconds: 150), () {
-          if (mounted) setState(() => _showSearch = false);
+          if (mounted) _closeDropdown();
         });
       }
     });
@@ -2176,31 +2179,235 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
   @override
   void dispose() {
+    _closeDropdown();
     _searchCtrl.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
 
   void _applySearch(String q) {
-    setState(() {
-      _filtered = q.isEmpty
-          ? widget.inventoryItems
-          : widget.inventoryItems
-              .where((it) => it.itemName.toLowerCase().contains(q.toLowerCase()))
-              .toList();
+    final results = q.isEmpty
+        ? widget.inventoryItems
+        : widget.inventoryItems
+            .where((it) => it.itemName.toLowerCase().contains(q.toLowerCase()))
+            .toList();
+    setState(() => _filtered = results);
+    _overlayEntry?.markNeedsBuild();
+  }
+
+  void _openDropdown() {
+    if (_overlayEntry != null) return;
+    _filtered = widget.inventoryItems;
+    setState(() => _showSearch = true);
+
+    final overlay = Overlay.of(context);
+    _overlayEntry = OverlayEntry(builder: (ctx) => _buildOverlay(ctx));
+    overlay.insert(_overlayEntry!);
+
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted) _searchFocus.requestFocus();
     });
   }
 
-  void _selectItem(InventoryItem item) {
-    setState(() {
-      widget.rowCtrl.selectedItem = item;
-      widget.rowCtrl.priceCtrl.text = item.unitPrice.toStringAsFixed(0);
-      _showSearch = false;
+  void _closeDropdown() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    if (mounted) {
+      setState(() => _showSearch = false);
       _searchCtrl.clear();
       _filtered = widget.inventoryItems;
-    });
+    }
     _searchFocus.unfocus();
+  }
+
+  void _selectItem(InventoryItem item) {
+    widget.rowCtrl.selectedItem = item;
+    widget.rowCtrl.priceCtrl.text = item.unitPrice.toStringAsFixed(0);
+    _closeDropdown();
+    if (mounted) setState(() {});
     widget.onChanged();
+  }
+
+  Widget _buildOverlay(BuildContext ctx) {
+    // Get position of the material field anchor
+    final renderBox = _materialKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return const SizedBox.shrink();
+
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size   = renderBox.size;
+
+    // Screen dimensions
+    final screenH = MediaQuery.of(context).size.height;
+    const dropH   = 300.0;
+
+    // Show below if space, else above
+    final showBelow = (offset.dy + size.height + dropH) < screenH;
+    final top    = showBelow ? offset.dy + size.height + 4 : null;
+    final bottom = showBelow ? null : screenH - offset.dy + 4;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _closeDropdown,
+      child: Stack(
+        children: [
+          Positioned(
+            left:  offset.dx,
+            width: size.width.clamp(200.0, 400.0),
+            top:   top,
+            bottom: bottom,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(10),
+              color: Colors.white,
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: dropH),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: AppTheme.salesColor.withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ── search field ──────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        focusNode: _searchFocus,
+                        onChanged: _applySearch,
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: '\u0627\u0628\u062d\u062b \u0628\u0627\u0633\u0645 \u0627\u0644\u0645\u0627\u062f\u0629...',
+                          hintStyle: const TextStyle(fontSize: 12),
+                          prefixIcon:
+                              const Icon(Icons.search_rounded, size: 18),
+                          suffixIcon: _searchCtrl.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 15),
+                                  onPressed: () {
+                                    _searchCtrl.clear();
+                                    _applySearch('');
+                                  },
+                                )
+                              : null,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(
+                                color: AppTheme.salesColor
+                                    .withValues(alpha: 0.4)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                                color: AppTheme.salesColor, width: 1.5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    // ── results ───────────────────────────────────────────
+                    Flexible(
+                      child: _filtered.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Text(
+                                '\u0644\u0627 \u062a\u0648\u062c\u062f \u0646\u062a\u0627\u0626\u062c',
+                                style: TextStyle(
+                                    fontSize: 12, color: AppTheme.textGrey),
+                                textAlign: TextAlign.center,
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: _filtered.length,
+                              itemBuilder: (_, idx) {
+                                final item  = _filtered[idx];
+                                final isSel =
+                                    widget.rowCtrl.selectedItem?.id == item.id;
+                                final hasStock = item.quantity > 0;
+                                return InkWell(
+                                  onTap: () => _selectItem(item),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 9),
+                                    decoration: BoxDecoration(
+                                      color: isSel
+                                          ? AppTheme.salesColor
+                                              .withValues(alpha: 0.08)
+                                          : Colors.transparent,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.itemName,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: isSel
+                                                      ? FontWeight.bold
+                                                      : FontWeight.w500,
+                                                  color: AppTheme.textDark,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                '\u0633\u0639\u0631 \u0627\u0644\u0628\u064a\u0639: ${item.unitPrice.toStringAsFixed(0)} IQD',
+                                                style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: AppTheme.textGrey),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 7, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: hasStock
+                                                ? Colors.green.shade50
+                                                : Colors.red.shade50,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: hasStock
+                                                  ? Colors.green.shade300
+                                                  : Colors.red.shade300,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: hasStock
+                                                  ? Colors.green.shade700
+                                                  : Colors.red.shade700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -2212,7 +2419,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     Color    sBdr = Colors.grey.shade200;
     Color    sClr = AppTheme.textGrey;
     IconData sIco = Icons.inventory_2_outlined;
-    String   sQty = '—';
+    String   sQty = '\u2014';
     if (sel != null) {
       if (sel.quantity <= 0) {
         sBg  = Colors.red.shade50;     sBdr = Colors.red.shade300;
@@ -2233,7 +2440,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     const double fSize = 11.5;
     const double lSize = 10.5;
     const double btnW  = fldH;
-    const double btnsW = btnW * 3 + 3 * 2; // 3 buttons + 2 gaps of 3px
+    const double btnsW = btnW * 3 + 3 * 2;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3),
@@ -2249,102 +2456,84 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
 
-                // ① sequence badge — offset-top so it aligns with field centre
-                Padding(
-                  padding: EdgeInsets.only(
-                    top: widget.showHeader
-                        ? (lSize + 4 + (fldH - 22) / 2)
-                        : (fldH - 22) / 2,
-                  ),
-                  child: _seqBadge(fSize),
-                ),
-                const SizedBox(width: 6),
+            // ① sequence badge
+            Padding(
+              padding: EdgeInsets.only(
+                top: widget.showHeader
+                    ? (lSize + 4 + (fldH - 22) / 2)
+                    : (fldH - 22) / 2,
+              ),
+              child: _seqBadge(fSize),
+            ),
+            const SizedBox(width: 6),
 
-                // ② columns area — header row (first item only) + fields row
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+            // ② columns area
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
 
-                      // ── header row — shown ONLY for the first item row ──────
-                      if (widget.showHeader)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Row(
-                            children: [
-                              Expanded(flex: 30, child: _hdr('المادة', lSize)),
-                              const SizedBox(width: 4),
-                              Expanded(flex: 9,  child: _hdr('الكمية', lSize)),
-                              const SizedBox(width: 4),
-                              Expanded(flex: 14, child: _hdr('السعر', lSize)),
-                              const SizedBox(width: 4),
-                              Expanded(flex: 16, child: _hdr('الإجمالي', lSize)),
-                              const SizedBox(width: 4),
-                              Expanded(flex: 13, child: _hdr('المخزون', lSize)),
-                              const SizedBox(width: 4),
-                              SizedBox(width: btnsW), // placeholder — aligns with buttons
-                            ],
-                          ),
-                        ),
-
-                      // ── fields row ──────────────────────────────────────────
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
+                  // ── header row (first item only) ──────────────────────
+                  if (widget.showHeader)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
                         children: [
-                          Expanded(flex: 30, child: _materialInput(sel, fSize, fldH)),
+                          Expanded(flex: 30, child: _hdr('\u0627\u0644\u0645\u0627\u062f\u0629', lSize)),
                           const SizedBox(width: 4),
-                          Expanded(flex: 9,  child: _numInput(ctrl: widget.rowCtrl.qtyCtrl,   hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                          Expanded(flex: 9,  child: _hdr('\u0627\u0644\u0643\u0645\u064a\u0629', lSize)),
                           const SizedBox(width: 4),
-                          Expanded(flex: 14, child: _numInput(ctrl: widget.rowCtrl.priceCtrl, hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                          Expanded(flex: 14, child: _hdr('\u0627\u0644\u0633\u0639\u0631', lSize)),
                           const SizedBox(width: 4),
-                          Expanded(flex: 16, child: _totalInput(widget.rowCtrl.lineTotal, fSize, fldH)),
+                          Expanded(flex: 16, child: _hdr('\u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a', lSize)),
                           const SizedBox(width: 4),
-                          Expanded(flex: 13, child: _stockInput(sBg, sBdr, sClr, sIco, sQty, fSize, fldH)),
+                          Expanded(flex: 13, child: _hdr('\u0627\u0644\u0645\u062e\u0632\u0648\u0646', lSize)),
                           const SizedBox(width: 4),
-                          _actionRow(fldH, btnW),
+                          SizedBox(width: btnsW),
                         ],
                       ),
+                    ),
+
+                  // ── fields row ────────────────────────────────────────
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(flex: 30, child: _materialInput(sel, fSize, fldH)),
+                      const SizedBox(width: 4),
+                      Expanded(flex: 9,  child: _numInput(ctrl: widget.rowCtrl.qtyCtrl,   hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                      const SizedBox(width: 4),
+                      Expanded(flex: 14, child: _numInput(ctrl: widget.rowCtrl.priceCtrl, hint: '0', fSize: fSize, fldH: fldH, onChanged: widget.onChanged)),
+                      const SizedBox(width: 4),
+                      Expanded(flex: 16, child: _totalInput(widget.rowCtrl.lineTotal, fSize, fldH)),
+                      const SizedBox(width: 4),
+                      Expanded(flex: 13, child: _stockInput(sBg, sBdr, sClr, sIco, sQty, fSize, fldH)),
+                      const SizedBox(width: 4),
+                      _actionRow(fldH, btnW),
                     ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-
-          // ── search dropdown ─────────────────────────────────────────────────
-          if (_showSearch)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: _searchDropdown(),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ── header label (bold, centred) — shown once above all fields ──────────────
+  // ── header label ──────────────────────────────────────────────────────────
   Widget _hdr(String label, double lSize) {
-    return Text(
-      label,
+    return Text(label,
       textAlign: TextAlign.center,
-      style: TextStyle(
-        fontSize: lSize,
-        fontWeight: FontWeight.bold,
-        color: AppTheme.textDark,
-      ),
-    );
+      style: TextStyle(fontSize: lSize, fontWeight: FontWeight.bold, color: AppTheme.textDark));
   }
 
-  // ── sequence badge ───────────────────────────────────────────────────────────
+  // ── sequence badge ────────────────────────────────────────────────────────
   Widget _seqBadge(double fSize) {
     return Container(
       width: 22, height: 22,
@@ -2353,36 +2542,16 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
-      child: Text(
-        '${widget.rowCtrl.sequence}',
-        style: TextStyle(
-          fontSize: fSize - 1,
-          fontWeight: FontWeight.bold,
-          color: AppTheme.salesColor,
-        ),
-      ),
+      child: Text('${widget.rowCtrl.sequence}',
+        style: TextStyle(fontSize: fSize - 1, fontWeight: FontWeight.bold, color: AppTheme.salesColor)),
     );
   }
 
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // حقل المادة — ارتفاع fldH مثل باقي الحقول
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ── material selector (uses Overlay) ─────────────────────────────────────
   Widget _materialInput(InventoryItem? sel, double fSize, double fldH) {
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _showSearch = !_showSearch;
-          _filtered = widget.inventoryItems;
-          _searchCtrl.clear();
-        });
-        if (_showSearch) {
-          Future.delayed(
-              const Duration(milliseconds: 80), () => _searchFocus.requestFocus());
-        } else {
-          _searchFocus.unfocus();
-        }
-      },
+      key: _materialKey,
+      onTap: () => _showSearch ? _closeDropdown() : _openDropdown(),
       child: Container(
         height: fldH,
         padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2402,7 +2571,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
           children: [
             Expanded(
               child: Text(
-                sel?.itemName ?? 'اختر...',
+                sel?.itemName ?? '\u0627\u062e\u062a\u0631...',
                 style: TextStyle(
                   fontSize: fSize,
                   fontWeight: sel != null ? FontWeight.bold : FontWeight.normal,
@@ -2423,9 +2592,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // حقل رقمي — ارتفاع fldH
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ── numeric input ─────────────────────────────────────────────────────────
   Widget _numInput({
     required TextEditingController ctrl,
     required String hint,
@@ -2450,27 +2617,19 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
             filled: true,
             fillColor: const Color(0xFFF9FAFB),
             contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: (fldH - fSize * 1.4) / 2),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(7),
-              borderSide: const BorderSide(color: AppTheme.divider),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(7),
-              borderSide: const BorderSide(color: AppTheme.divider),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(7),
-              borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
-            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.divider)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.divider)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5)),
           ),
         ),
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // خلية الإجمالي — ارتفاع fldH
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ── total cell ────────────────────────────────────────────────────────────
   Widget _totalInput(double total, double fSize, double fldH) {
     return Container(
       height: fldH,
@@ -2484,21 +2643,15 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: Text(
-          total == 0 ? '—' : CurrencyHelper.format(total),
-          style: TextStyle(
-            fontSize: fSize,
-            fontWeight: FontWeight.bold,
-            color: AppTheme.salesColor,
-          ),
+          total == 0 ? '\u2014' : CurrencyHelper.format(total),
+          style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold, color: AppTheme.salesColor),
           textAlign: TextAlign.center,
         ),
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // خلية المخزون — ارتفاع fldH
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ── stock cell ────────────────────────────────────────────────────────────
   Widget _stockInput(Color bg, Color bdr, Color clr, IconData ico, String qty,
       double fSize, double fldH) {
     return Container(
@@ -2517,23 +2670,14 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
           children: [
             Icon(ico, size: fSize, color: clr),
             const SizedBox(width: 3),
-            Text(
-              qty,
-              style: TextStyle(
-                fontSize: fSize,
-                fontWeight: FontWeight.bold,
-                color: clr,
-              ),
-            ),
+            Text(qty, style: TextStyle(fontSize: fSize, fontWeight: FontWeight.bold, color: clr)),
           ],
         ),
       ),
     );
   }
 
-  // ── أزرار التحريك والحذف ──────────────────────────────────────────────────────
-  // fldH: ارتفاع الحقول — تُضاف إليه ارتفاع التسمية (lSize + 4) لتوسيط الأزرار
-  // ── horizontal square buttons [\u25b2][\u25bc][\u2715] ─────────────────────────────────────────
+  // ── horizontal action buttons ─────────────────────────────────────────────
   Widget _actionRow(double fldH, double btnW) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -2563,158 +2707,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
       ),
     );
   }
-
-  // ── قائمة البحث المنسدلة ─────────────────────────────────────────────────────
-  Widget _searchDropdown() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.4)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          // حقل البحث
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: TextField(
-              controller: _searchCtrl,
-              focusNode: _searchFocus,
-              onChanged: _applySearch,
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'ابحث باسم المادة...',
-                hintStyle: const TextStyle(fontSize: 12),
-                prefixIcon: const Icon(Icons.search_rounded, size: 18),
-                suffixIcon: _searchCtrl.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 15),
-                        onPressed: () {
-                          _searchCtrl.clear();
-                          _applySearch('');
-                        },
-                      )
-                    : null,
-                isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                      color: AppTheme.salesColor.withValues(alpha: 0.4)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      const BorderSide(color: AppTheme.salesColor, width: 1.5),
-                ),
-              ),
-            ),
-          ),
-          const Divider(height: 1),
-          // نتائج البحث
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: _filtered.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text(
-                      'لا توجد نتائج',
-                      style: TextStyle(fontSize: 12, color: AppTheme.textGrey),
-                      textAlign: TextAlign.center,
-                    ),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _filtered.length,
-                    itemBuilder: (_, idx) {
-                      final item  = _filtered[idx];
-                      final isSel = widget.rowCtrl.selectedItem?.id == item.id;
-                      final hasStock = item.quantity > 0;
-                      return InkWell(
-                        onTap: () => _selectItem(item),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 9),
-                          decoration: BoxDecoration(
-                            color: isSel
-                                ? AppTheme.salesColor.withValues(alpha: 0.08)
-                                : Colors.transparent,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.itemName,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: isSel
-                                            ? FontWeight.bold
-                                            : FontWeight.w500,
-                                        color: AppTheme.textDark,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'سعر البيع: ${item.unitPrice.toStringAsFixed(0)} IQD',
-                                      style: const TextStyle(
-                                          fontSize: 11,
-                                          color: AppTheme.textGrey),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 7, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: hasStock
-                                      ? Colors.green.shade50
-                                      : Colors.red.shade50,
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: hasStock
-                                        ? Colors.green.shade300
-                                        : Colors.red.shade300,
-                                  ),
-                                ),
-                                child: Text(
-                                  '${item.quantity.toStringAsFixed(0)} ${item.unit}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: hasStock
-                                        ? Colors.green.shade700
-                                        : Colors.red.shade700,
-                                  ),
-                                ),
-                              ),
-                              if (isSel) ...[
-                                const SizedBox(width: 6),
-                                const Icon(Icons.check_circle_rounded,
-                                    size: 16, color: AppTheme.salesColor),
-                              ],
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
 }
+
+
 
