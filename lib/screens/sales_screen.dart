@@ -1455,40 +1455,86 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                     _SheetSection(
                       title: 'معلومات الفاتورة',
                       icon: Icons.info_outline_rounded,
-                      child: Column(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // اسم الزبون
-                          _SheetField(
-                            child: TextFormField(
-                              controller: _customerCtrl,
-                              decoration: _inputDeco(
-                                  'اسم الزبون *',
-                                  Icons.person_outline_rounded),
-                              validator: (v) =>
-                                  (v == null || v.trim().isEmpty)
-                                      ? 'اسم الزبون مطلوب'
-                                      : null,
+                          // اسم الزبون — 50% من الصف
+                          Expanded(
+                            flex: 2,
+                            child: _SheetField(
+                              child: TextFormField(
+                                controller: _customerCtrl,
+                                decoration: _inputDeco(
+                                    'اسم الزبون *',
+                                    Icons.person_outline_rounded),
+                                validator: (v) =>
+                                    (v == null || v.trim().isEmpty)
+                                        ? 'اسم الزبون مطلوب'
+                                        : null,
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          // تاريخ الفاتورة
-                          _SheetField(
-                            child: GestureDetector(
-                              onTap: _pickDate,
-                              child: AbsorbPointer(
-                                child: TextFormField(
-                                  decoration: _inputDeco(
-                                          'تاريخ الفاتورة *',
-                                          Icons.calendar_today_rounded)
-                                      .copyWith(
-                                    suffixIcon: const Icon(
-                                        Icons.arrow_drop_down_rounded,
-                                        color: AppTheme.salesColor),
+                          const SizedBox(width: 10),
+                          // تاريخ الفاتورة — 25% من الصف
+                          Expanded(
+                            flex: 1,
+                            child: _SheetField(
+                              child: GestureDetector(
+                                onTap: _pickDate,
+                                child: AbsorbPointer(
+                                  child: TextFormField(
+                                    decoration: _inputDeco(
+                                            'تاريخ الفاتورة *',
+                                            Icons.calendar_today_rounded)
+                                        .copyWith(
+                                      suffixIcon: const Icon(
+                                          Icons.arrow_drop_down_rounded,
+                                          color: AppTheme.salesColor),
+                                    ),
+                                    controller: TextEditingController(
+                                      text: DateFormat('dd/MM/yyyy')
+                                          .format(_invoiceDate),
+                                    ),
                                   ),
-                                  controller: TextEditingController(
-                                    text: DateFormat('dd/MM/yyyy')
-                                        .format(_invoiceDate),
-                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          // عدد المواد — 25% من الصف
+                          Expanded(
+                            flex: 1,
+                            child: _SheetField(
+                              child: Container(
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.salesColor.withValues(alpha: 0.05),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                      color: AppTheme.salesColor.withValues(alpha: 0.25)),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.inventory_2_outlined,
+                                        size: 16, color: AppTheme.salesColor),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${_rows.length}',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppTheme.salesColor,
+                                      ),
+                                    ),
+                                    Text(
+                                      _rows.length == 1 ? 'مادة' : 'مواد',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: AppTheme.textGrey,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -1529,11 +1575,6 @@ class _InvoiceFormSheetState extends State<_InvoiceFormSheet> {
                     _SheetSection(
                       title: 'المواد',
                       icon: Icons.inventory_2_outlined,
-                      trailing: Text(
-                        '${_rows.length} ${_rows.length == 1 ? 'مادة' : 'مواد'}',
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textGrey),
-                      ),
                       child: Column(
                         children: [
 
@@ -1974,12 +2015,10 @@ class _SheetSection extends StatelessWidget {
   final String title;
   final IconData icon;
   final Widget child;
-  final Widget? trailing;
   const _SheetSection(
       {required this.title,
       required this.icon,
-      required this.child,
-      this.trailing});
+      required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -2015,10 +2054,7 @@ class _SheetSection extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                         color: AppTheme.salesColor)),
-                if (trailing != null) ...[
-                  const Spacer(),
-                  trailing!,
-                ],
+
               ],
             ),
           ),
