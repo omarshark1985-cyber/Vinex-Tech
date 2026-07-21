@@ -2233,579 +2233,558 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedItem = widget.rowCtrl.selectedItem;
-    final mq = MediaQuery.of(context).size;
-    final fieldH   = mq.width < 360 ? 36.0 : (mq.width < 480 ? 40.0 : 44.0);
-    final fontSize = mq.width < 360 ? 13.0 : 14.0;
-    final labelFS  = mq.width < 360 ? 12.0 : 13.0;
+    final sel   = widget.rowCtrl.selectedItem;
+    final mq    = MediaQuery.of(context).size;
+    final compact = mq.width < 400;
 
-    // مؤشر المخزون
-    Color stockBg    = Colors.grey.shade50;
-    Color stockBdr   = Colors.grey.shade200;
-    Color stockColor = AppTheme.textGrey;
-    IconData stockIcon = Icons.inventory_2_outlined;
-    String stockQty  = '—';
-    String? stockLabel;
-    if (selectedItem != null) {
-      if (selectedItem.quantity <= 0) {
-        stockBg = Colors.red.shade50; stockBdr = Colors.red.shade300;
-        stockColor = Colors.red.shade700; stockIcon = Icons.warning_amber_rounded;
-        stockQty = '${selectedItem.quantity.toStringAsFixed(0)} ${selectedItem.unit}';
-        stockLabel = 'نفذ!';
-      } else if (selectedItem.isLowStock) {
-        stockBg = Colors.orange.shade50; stockBdr = Colors.orange.shade300;
-        stockColor = Colors.orange.shade700; stockIcon = Icons.warning_amber_outlined;
-        stockQty = '${selectedItem.quantity.toStringAsFixed(0)} ${selectedItem.unit}';
-        stockLabel = 'منخفض';
+    // ── stock colours ──────────────────────────────────────────────────
+    Color  sBg  = Colors.grey.shade50;
+    Color  sBdr = Colors.grey.shade200;
+    Color  sClr = AppTheme.textGrey;
+    IconData sIco = Icons.inventory_2_outlined;
+    String sQty = '—';
+    if (sel != null) {
+      if (sel.quantity <= 0) {
+        sBg  = Colors.red.shade50;    sBdr = Colors.red.shade300;
+        sClr = Colors.red.shade700;   sIco = Icons.warning_amber_rounded;
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
+      } else if (sel.isLowStock) {
+        sBg  = Colors.orange.shade50; sBdr = Colors.orange.shade300;
+        sClr = Colors.orange.shade700; sIco = Icons.warning_amber_outlined;
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       } else {
-        stockBg = Colors.green.shade50; stockBdr = Colors.green.shade300;
-        stockColor = Colors.green.shade700; stockIcon = Icons.check_circle_outline;
-        stockQty = '${selectedItem.quantity.toStringAsFixed(0)} ${selectedItem.unit}';
+        sBg  = Colors.green.shade50;  sBdr = Colors.green.shade300;
+        sClr = Colors.green.shade700; sIco = Icons.check_circle_outline;
+        sQty = '${sel.quantity.toStringAsFixed(0)} ${sel.unit}';
       }
     }
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 5),
+      margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFDDE1EA)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── شريط أعلى الصف: تسلسل + أزرار التحريك + حذف ──────────────────
-          Container(
-            padding: const EdgeInsets.fromLTRB(10, 6, 6, 0),
+          // ═══════════════════════════════════════════════════════════════
+          // الصف الرئيسي: تسلسل │ مادة │ كمية │ سعر │ إجمالي │ مخزون │ أزرار
+          // ═══════════════════════════════════════════════════════════════
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 6, 4, 6),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // رقم التسلسل
+
+                // ① رقم التسلسل
                 Container(
-                  width: 24, height: 24,
+                  width: 22, height: 22,
                   decoration: BoxDecoration(
-                    color: AppTheme.salesColor.withValues(alpha: 0.12),
+                    color: AppTheme.salesColor.withValues(alpha: 0.13),
                     shape: BoxShape.circle,
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     '${widget.rowCtrl.sequence}',
                     style: TextStyle(
-                      fontSize: labelFS,
+                      fontSize: 11,
                       fontWeight: FontWeight.bold,
                       color: AppTheme.salesColor,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                // اسم المادة المختارة أو placeholder
+                const SizedBox(width: 5),
+
+                // ② حقل المادة (قابل للبحث)
                 Expanded(
-                  child: Text(
-                    selectedItem?.itemName ?? 'اختر المادة من القائمة',
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: selectedItem != null ? FontWeight.bold : FontWeight.normal,
-                      color: selectedItem != null ? AppTheme.textDark : AppTheme.textGrey,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  flex: compact ? 5 : 4,
+                  child: _materialField(sel, compact),
                 ),
-                // زر تحريك لأعلى
-                _moveBtn(
-                  icon: Icons.keyboard_arrow_up_rounded,
-                  enabled: widget.canMoveUp,
-                  onTap: widget.onMoveUp,
-                  color: const Color(0xFF5C6BC0),
-                ),
-                // زر تحريك لأسفل
-                _moveBtn(
-                  icon: Icons.keyboard_arrow_down_rounded,
-                  enabled: widget.canMoveDown,
-                  onTap: widget.onMoveDown,
-                  color: const Color(0xFF5C6BC0),
-                ),
-                // زر حذف
-                widget.canDelete
-                    ? IconButton(
-                        icon: const Icon(
-                          Icons.remove_circle_outline_rounded,
-                          color: AppTheme.errorColor,
-                          size: 20,
-                        ),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        onPressed: widget.onDelete,
-                      )
-                    : const SizedBox(width: 28),
-              ],
-            ),
-          ),
+                const SizedBox(width: 4),
 
-          // ── حقل البحث + اختيار المادة ─────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // زر فتح البحث
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _showSearch = !_showSearch;
-                      _filtered = widget.inventoryItems;
-                      _searchCtrl.clear();
-                    });
-                    if (!_showSearch) {
-                      _searchFocus.unfocus();
-                    } else {
-                      Future.delayed(const Duration(milliseconds: 80),
-                          () => _searchFocus.requestFocus());
-                    }
-                  },
-                  child: Container(
-                    height: fieldH,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: _showSearch
-                            ? AppTheme.salesColor
-                            : const Color(0xFFDDE1EA),
-                        width: _showSearch ? 2 : 1,
-                      ),
-                      borderRadius: BorderRadius.circular(8),
-                      color: _showSearch
-                          ? AppTheme.salesColor.withValues(alpha: 0.04)
-                          : const Color(0xFFF9FAFB),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.search_rounded,
-                          size: 16,
-                          color: _showSearch ? AppTheme.salesColor : AppTheme.textGrey,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            selectedItem != null
-                                ? 'تغيير المادة...'
-                                : 'ابحث واختر المادة من المخزن',
-                            style: TextStyle(
-                              fontSize: fontSize - 1,
-                              color: AppTheme.textGrey,
-                            ),
-                          ),
-                        ),
-                        Icon(
-                          _showSearch
-                              ? Icons.expand_less_rounded
-                              : Icons.expand_more_rounded,
-                          size: 18,
-                          color: AppTheme.textGrey,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // قائمة البحث المنسدلة
-                if (_showSearch) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.4)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.08),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // حقل البحث
-                        Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: TextField(
-                            controller: _searchCtrl,
-                            focusNode: _searchFocus,
-                            onChanged: _applySearch,
-                            style: TextStyle(fontSize: fontSize),
-                            decoration: InputDecoration(
-                              hintText: 'ابحث باسم المادة...',
-                              hintStyle: TextStyle(fontSize: fontSize - 1),
-                              prefixIcon: const Icon(Icons.search_rounded, size: 18),
-                              suffixIcon: _searchCtrl.text.isNotEmpty
-                                  ? IconButton(
-                                      icon: const Icon(Icons.clear, size: 16),
-                                      onPressed: () {
-                                        _searchCtrl.clear();
-                                        _applySearch('');
-                                      },
-                                    )
-                                  : null,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(
-                                    color: AppTheme.salesColor.withValues(alpha: 0.4)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: const BorderSide(
-                                    color: AppTheme.salesColor, width: 1.5),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // نتائج البحث
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 220),
-                          child: _filtered.isEmpty
-                              ? Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Text(
-                                    'لا توجد نتائج',
-                                    style: TextStyle(
-                                        fontSize: fontSize - 1,
-                                        color: AppTheme.textGrey),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                )
-                              : ListView.builder(
-                                  shrinkWrap: true,
-                                  itemCount: _filtered.length,
-                                  itemBuilder: (_, idx) {
-                                    final item = _filtered[idx];
-                                    final isSelected =
-                                        widget.rowCtrl.selectedItem?.id == item.id;
-                                    final hasStock = item.quantity > 0;
-                                    return InkWell(
-                                      onTap: () => _selectItem(item),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12, vertical: 10),
-                                        decoration: BoxDecoration(
-                                          color: isSelected
-                                              ? AppTheme.salesColor.withValues(alpha: 0.08)
-                                              : Colors.transparent,
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            // اسم المادة
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    item.itemName,
-                                                    style: TextStyle(
-                                                      fontSize: fontSize,
-                                                      fontWeight: isSelected
-                                                          ? FontWeight.bold
-                                                          : FontWeight.w500,
-                                                      color: AppTheme.textDark,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 2),
-                                                  Text(
-                                                    'سعر البيع: ${item.unitPrice.toStringAsFixed(0)} IQD',
-                                                    style: TextStyle(
-                                                      fontSize: fontSize - 2,
-                                                      color: AppTheme.textGrey,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            // مؤشر المخزون في القائمة
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                  horizontal: 7, vertical: 3),
-                                              decoration: BoxDecoration(
-                                                color: hasStock
-                                                    ? Colors.green.shade50
-                                                    : Colors.red.shade50,
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                                border: Border.all(
-                                                  color: hasStock
-                                                      ? Colors.green.shade300
-                                                      : Colors.red.shade300,
-                                                ),
-                                              ),
-                                              child: Text(
-                                                '${item.quantity.toStringAsFixed(0)} ${item.unit}',
-                                                style: TextStyle(
-                                                  fontSize: fontSize - 2,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: hasStock
-                                                      ? Colors.green.shade700
-                                                      : Colors.red.shade700,
-                                                ),
-                                              ),
-                                            ),
-                                            if (isSelected) ...[
-                                              const SizedBox(width: 6),
-                                              Icon(Icons.check_circle_rounded,
-                                                  size: 16,
-                                                  color: AppTheme.salesColor),
-                                            ],
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // حقل الكمية
-                Expanded(
-                  flex: 3,
-                  child: _labeledField(
+                // ③ الكمية
+                SizedBox(
+                  width: compact ? 46 : 54,
+                  child: _numField(
+                    ctrl: widget.rowCtrl.qtyCtrl,
+                    hint: '0',
                     label: 'الكمية',
-                    labelFS: labelFS,
-                    child: _compactField(
-                      widget.rowCtrl.qtyCtrl,
-                      '0',
-                      widget.onChanged,
-                      number: true,
-                      fieldH: fieldH,
-                      fontSize: fontSize,
-                    ),
+                    onChanged: widget.onChanged,
                   ),
                 ),
-                const SizedBox(width: 6),
-                // حقل السعر
-                Expanded(
-                  flex: 4,
-                  child: _labeledField(
-                    label: 'سعر المفرد',
-                    labelFS: labelFS,
-                    child: _compactField(
-                      widget.rowCtrl.priceCtrl,
-                      '0',
-                      widget.onChanged,
-                      number: true,
-                      fieldH: fieldH,
-                      fontSize: fontSize,
-                    ),
+                const SizedBox(width: 4),
+
+                // ④ السعر
+                SizedBox(
+                  width: compact ? 62 : 72,
+                  child: _numField(
+                    ctrl: widget.rowCtrl.priceCtrl,
+                    hint: '0',
+                    label: 'السعر',
+                    onChanged: widget.onChanged,
                   ),
                 ),
-                const SizedBox(width: 6),
-                // مؤشر المخزون
-                Expanded(
-                  flex: 4,
-                  child: _labeledField(
-                    label: 'المخزون',
-                    labelFS: labelFS,
-                    child: Container(
-                      height: fieldH,
-                      width: double.infinity,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: stockBg,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: stockBdr),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(stockIcon, size: 11, color: stockColor),
-                              const SizedBox(width: 2),
-                              Flexible(
-                                child: Text(
-                                  stockQty,
-                                  style: TextStyle(
-                                    fontSize: labelFS,
-                                    fontWeight: FontWeight.w700,
-                                    color: stockColor,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (stockLabel != null)
-                            Text(
-                              stockLabel,
-                              style: TextStyle(
-                                fontSize: labelFS - 1,
-                                fontWeight: FontWeight.bold,
-                                color: stockColor,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
+                const SizedBox(width: 4),
+
+                // ⑤ الإجمالي
+                SizedBox(
+                  width: compact ? 62 : 72,
+                  child: _totalCell(widget.rowCtrl.lineTotal, compact),
                 ),
+                const SizedBox(width: 4),
+
+                // ⑥ مؤشر المخزون
+                SizedBox(
+                  width: compact ? 52 : 60,
+                  child: _stockCell(sBg, sBdr, sClr, sIco, sQty, compact),
+                ),
+                const SizedBox(width: 2),
+
+                // ⑦ أزرار التحريك والحذف (عمود)
+                _actionButtons(),
               ],
             ),
           ),
 
-          const SizedBox(height: 6),
-          // الإجمالي
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: AppTheme.salesColor.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(8),
+          // ═══════════════════════════════════════════════════════════════
+          // قائمة البحث المنسدلة (تظهر تحت الصف عند الضغط على المادة)
+          // ═══════════════════════════════════════════════════════════════
+          if (_showSearch)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+              child: _searchDropdown(compact),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── حقل المادة ──────────────────────────────────────────────────────────────
+  Widget _materialField(InventoryItem? sel, bool compact) {
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _showSearch = !_showSearch;
+          _filtered = widget.inventoryItems;
+          _searchCtrl.clear();
+        });
+        if (_showSearch) {
+          Future.delayed(const Duration(milliseconds: 80),
+              () => _searchFocus.requestFocus());
+        } else {
+          _searchFocus.unfocus();
+        }
+      },
+      child: Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: _showSearch
+              ? AppTheme.salesColor.withValues(alpha: 0.05)
+              : (sel != null ? const Color(0xFFF9FAFB) : const Color(0xFFFFF8F0)),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: _showSearch
+                ? AppTheme.salesColor
+                : (sel != null ? const Color(0xFFDDE1EA) : Colors.orange.shade200),
+            width: _showSearch ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  sel != null ? Icons.inventory_2_rounded : Icons.add_box_outlined,
+                  size: 11,
+                  color: sel != null ? AppTheme.salesColor : Colors.orange.shade400,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  'المادة',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppTheme.textGrey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _showSearch ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  size: 13,
+                  color: AppTheme.textGrey,
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              sel?.itemName ?? 'اختر...',
+              style: TextStyle(
+                fontSize: compact ? 11 : 12,
+                fontWeight: sel != null ? FontWeight.bold : FontWeight.normal,
+                color: sel != null ? AppTheme.textDark : Colors.orange.shade600,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'الإجمالي:',
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textGrey,
-                    ),
-                  ),
-                  Text(
-                    CurrencyHelper.format(widget.rowCtrl.lineTotal),
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: fontSize + 1,
-                      color: AppTheme.salesColor,
-                    ),
-                  ),
-                ],
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── حقل رقمي مع تسمية ───────────────────────────────────────────────────────
+  Widget _numField({
+    required TextEditingController ctrl,
+    required String hint,
+    required String label,
+    required VoidCallback onChanged,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: 36,
+          child: TextField(
+            controller: ctrl,
+            onChanged: (_) => onChanged(),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: const TextStyle(fontSize: 12, color: AppTheme.textGrey),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.divider),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.divider),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(7),
+                borderSide: const BorderSide(color: AppTheme.salesColor, width: 1.5),
               ),
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── خلية الإجمالي ────────────────────────────────────────────────────────────
+  Widget _totalCell(double total, bool compact) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'الإجمالي',
+          style: TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 2),
+        Container(
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppTheme.salesColor.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.25)),
+          ),
+          child: Text(
+            total == 0 ? '—' : CurrencyHelper.format(total),
+            style: TextStyle(
+              fontSize: compact ? 10 : 11,
+              fontWeight: FontWeight.bold,
+              color: AppTheme.salesColor,
+            ),
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── خلية المخزون ─────────────────────────────────────────────────────────────
+  Widget _stockCell(Color bg, Color bdr, Color clr, IconData ico, String qty, bool compact) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'المخزون',
+          style: TextStyle(fontSize: 10, color: AppTheme.textGrey, fontWeight: FontWeight.w500),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 2),
+        Container(
+          height: 36,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: bdr),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(ico, size: 11, color: clr),
+              const SizedBox(height: 1),
+              Text(
+                qty,
+                style: TextStyle(
+                  fontSize: compact ? 9 : 10,
+                  fontWeight: FontWeight.bold,
+                  color: clr,
+                ),
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── أزرار التحريك والحذف ──────────────────────────────────────────────────────
+  Widget _actionButtons() {
+    return SizedBox(
+      width: 22,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // تحريك لأعلى
+          _tinyBtn(
+            icon: Icons.keyboard_arrow_up_rounded,
+            color: const Color(0xFF5C6BC0),
+            enabled: widget.canMoveUp,
+            onTap: widget.onMoveUp,
+          ),
+          const SizedBox(height: 2),
+          // تحريك لأسفل
+          _tinyBtn(
+            icon: Icons.keyboard_arrow_down_rounded,
+            color: const Color(0xFF5C6BC0),
+            enabled: widget.canMoveDown,
+            onTap: widget.onMoveDown,
+          ),
+          const SizedBox(height: 2),
+          // حذف
+          _tinyBtn(
+            icon: Icons.close_rounded,
+            color: AppTheme.errorColor,
+            enabled: widget.canDelete,
+            onTap: widget.canDelete ? widget.onDelete : () {},
           ),
         ],
       ),
     );
   }
 
-  Widget _moveBtn({
+  // ── زر صغير 22×22 ────────────────────────────────────────────────────────────
+  Widget _tinyBtn({
     required IconData icon,
+    required Color color,
     required bool enabled,
     required VoidCallback onTap,
-    required Color color,
   }) {
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 26,
-        height: 26,
-        margin: const EdgeInsets.symmetric(horizontal: 1),
+        width: 22, height: 22,
         decoration: BoxDecoration(
           color: enabled
               ? color.withValues(alpha: 0.10)
-              : Colors.grey.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(6),
+              : Colors.grey.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(5),
           border: Border.all(
             color: enabled
                 ? color.withValues(alpha: 0.35)
-                : Colors.grey.withValues(alpha: 0.2),
+                : Colors.grey.withValues(alpha: 0.15),
           ),
         ),
         child: Icon(
           icon,
-          size: 18,
-          color: enabled ? color : Colors.grey.shade400,
+          size: 14,
+          color: enabled ? color : Colors.grey.shade300,
         ),
       ),
     );
   }
 
-  Widget _labeledField({
-    required String label,
-    required double labelFS,
-    required Widget child,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: labelFS,
-            fontWeight: FontWeight.w600,
-            color: AppTheme.textGrey,
+  // ── قائمة البحث المنسدلة ─────────────────────────────────────────────────────
+  Widget _searchDropdown(bool compact) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.salesColor.withValues(alpha: 0.4)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
           ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 3),
-        child,
-      ],
-    );
-  }
-
-  Widget _compactField(
-    TextEditingController ctrl,
-    String hint,
-    VoidCallback onChange, {
-    bool number = false,
-    required double fieldH,
-    required double fontSize,
-  }) {
-    final vPad = ((fieldH - fontSize - 8) / 2).clamp(6.0, 14.0);
-    return SizedBox(
-      height: fieldH,
-      child: TextField(
-        controller: ctrl,
-        onChanged: (_) => onChange(),
-        keyboardType:
-            number ? const TextInputType.numberWithOptions(decimal: true) : null,
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.bold),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w500,
-            color: AppTheme.textGrey,
+        ],
+      ),
+      child: Column(
+        children: [
+          // حقل البحث
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: TextField(
+              controller: _searchCtrl,
+              focusNode: _searchFocus,
+              onChanged: _applySearch,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'ابحث باسم المادة...',
+                hintStyle: const TextStyle(fontSize: 12),
+                prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 15),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _applySearch('');
+                        },
+                      )
+                    : null,
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(
+                      color: AppTheme.salesColor.withValues(alpha: 0.4)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide:
+                      const BorderSide(color: AppTheme.salesColor, width: 1.5),
+                ),
+              ),
+            ),
           ),
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: vPad),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: AppTheme.divider),
+          const Divider(height: 1),
+          // نتائج البحث
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: _filtered.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      'لا توجد نتائج',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textGrey),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _filtered.length,
+                    itemBuilder: (_, idx) {
+                      final item  = _filtered[idx];
+                      final isSel = widget.rowCtrl.selectedItem?.id == item.id;
+                      final hasStock = item.quantity > 0;
+                      return InkWell(
+                        onTap: () => _selectItem(item),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: isSel
+                                ? AppTheme.salesColor.withValues(alpha: 0.08)
+                                : Colors.transparent,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.itemName,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: isSel
+                                            ? FontWeight.bold
+                                            : FontWeight.w500,
+                                        color: AppTheme.textDark,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'سعر البيع: ${item.unitPrice.toStringAsFixed(0)} IQD',
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppTheme.textGrey),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: hasStock
+                                      ? Colors.green.shade50
+                                      : Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: hasStock
+                                        ? Colors.green.shade300
+                                        : Colors.red.shade300,
+                                  ),
+                                ),
+                                child: Text(
+                                  '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: hasStock
+                                        ? Colors.green.shade700
+                                        : Colors.red.shade700,
+                                  ),
+                                ),
+                              ),
+                              if (isSel) ...[
+                                const SizedBox(width: 6),
+                                const Icon(Icons.check_circle_rounded,
+                                    size: 16, color: AppTheme.salesColor),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: AppTheme.divider),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: AppTheme.salesColor, width: 2),
-          ),
-        ),
+        ],
       ),
     );
   }
+
 }
 
