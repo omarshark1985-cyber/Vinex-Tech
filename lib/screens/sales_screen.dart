@@ -2245,16 +2245,25 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     final top    = showBelow ? offset.dy + size.height + 4 : null;
     final bottom = showBelow ? null : screenH - offset.dy + 4;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _closeDropdown,
-      child: Stack(
-        children: [
-          Positioned(
-            left:  offset.dx,
-            width: size.width.clamp(200.0, 400.0),
-            top:   top,
-            bottom: bottom,
+    return Stack(
+      children: [
+        // ── transparent backdrop — closes dropdown on outside tap ──────────
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _closeDropdown,
+            child: const SizedBox.expand(),
+          ),
+        ),
+        // ── dropdown panel — taps go directly to items ────────────────────
+        Positioned(
+          left:  offset.dx,
+          width: size.width.clamp(200.0, 400.0),
+          top:   top,
+          bottom: bottom,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},          // absorb tap so backdrop doesn't fire
             child: Material(
               elevation: 8,
               borderRadius: BorderRadius.circular(10),
@@ -2405,8 +2414,8 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
