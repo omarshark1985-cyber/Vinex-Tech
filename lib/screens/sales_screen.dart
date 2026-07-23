@@ -2200,7 +2200,9 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     _filtered = widget.inventoryItems;
     setState(() => _showSearch = true);
 
-    final overlay = Overlay.of(context);
+    // rootOverlay: true — escapes modal bottom-sheet overlay scope so
+    // the dropdown sits in the root app overlay and receives all pointer events
+    final overlay = Overlay.of(context, rootOverlay: true);
     _overlayEntry = OverlayEntry(builder: (ctx) => _buildOverlay(ctx));
     overlay.insert(_overlayEntry!);
 
@@ -2236,8 +2238,8 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     final offset = renderBox.localToGlobal(Offset.zero);
     final size   = renderBox.size;
 
-    // Screen dimensions
-    final screenH = MediaQuery.of(context).size.height;
+    // Screen dimensions — use ctx (overlay context) not the widget context
+    final screenH = MediaQuery.of(ctx).size.height;
     const dropH   = 300.0;
 
     // Show below if space, else above
@@ -2255,29 +2257,26 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
             child: const SizedBox.expand(),
           ),
         ),
-        // ── dropdown panel — taps go directly to items ────────────────────
+        // ── dropdown panel — Material is opaque, backdrop won't fire ─────────
         Positioned(
           left:  offset.dx,
           width: size.width.clamp(200.0, 400.0),
           top:   top,
           bottom: bottom,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {},          // absorb tap so backdrop doesn't fire
-            child: Material(
-              elevation: 8,
-              borderRadius: BorderRadius.circular(10),
-              color: Colors.white,
-              child: Container(
-                constraints: const BoxConstraints(maxHeight: dropH),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                      color: AppTheme.salesColor.withValues(alpha: 0.4)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+          child: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(10),
+            color: Colors.white,
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: dropH),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: AppTheme.salesColor.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                     // ── search field ──────────────────────────────────────
                     Padding(
                       padding: const EdgeInsets.all(8),
@@ -2338,7 +2337,8 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
                                 final isSel =
                                     widget.rowCtrl.selectedItem?.id == item.id;
                                 final hasStock = item.quantity > 0;
-                                return InkWell(
+                                return GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
                                   onTap: () => _selectItem(item),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
@@ -2347,7 +2347,7 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
                                       color: isSel
                                           ? AppTheme.salesColor
                                               .withValues(alpha: 0.08)
-                                          : Colors.transparent,
+                                          : Colors.white,
                                     ),
                                     child: Row(
                                       children: [
@@ -2413,7 +2413,6 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
                 ),
               ),
             ),
-          ),
         ),
       ],
     );
@@ -2559,9 +2558,9 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
   // ── material selector (uses Overlay) ─────────────────────────────────────
   Widget _materialInput(InventoryItem? sel, double fSize, double fldH) {
     return GestureDetector(
-      key: _materialKey,
       onTap: () => _showSearch ? _closeDropdown() : _openDropdown(),
       child: Container(
+        key: _materialKey,   // ← moved here: Container always has a reliable RenderBox
         height: fldH,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
