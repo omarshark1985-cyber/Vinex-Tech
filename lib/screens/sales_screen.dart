@@ -2148,274 +2148,51 @@ class _ItemRowWidget extends StatefulWidget {
 
 class _ItemRowWidgetState extends State<_ItemRowWidget> {
   final _searchCtrl  = TextEditingController();
-  final _searchFocus = FocusNode();
-  final _materialKey = GlobalKey(); // anchor for overlay positioning
+  final _materialKey = GlobalKey(); // anchor for dialog positioning
 
   bool _showSearch = false;
   List<InventoryItem> _filtered = [];
-
-  OverlayEntry? _overlayEntry;
 
   @override
   void initState() {
     super.initState();
     _filtered = widget.inventoryItems;
-    _searchFocus.addListener(() {
-      if (!_searchFocus.hasFocus && _showSearch) {
-        Future.delayed(const Duration(milliseconds: 150), () {
-          if (mounted) _closeDropdown();
-        });
-      }
-    });
   }
 
   @override
   void didUpdateWidget(_ItemRowWidget old) {
     super.didUpdateWidget(old);
     if (old.inventoryItems != widget.inventoryItems) {
-      _applySearch(_searchCtrl.text);
+      _filtered = List.from(widget.inventoryItems);
     }
   }
 
   @override
   void dispose() {
-    _closeDropdown();
     _searchCtrl.dispose();
-    _searchFocus.dispose();
     super.dispose();
   }
 
-  void _applySearch(String q) {
-    final results = q.isEmpty
-        ? widget.inventoryItems
-        : widget.inventoryItems
-            .where((it) => it.itemName.toLowerCase().contains(q.toLowerCase()))
-            .toList();
-    setState(() => _filtered = results);
-    _overlayEntry?.markNeedsBuild();
-  }
+  // ── open picker dialog ────────────────────────────────────────────────────
+  Future<void> _openPicker() async {
+    _filtered = List.from(widget.inventoryItems);
+    _searchCtrl.clear();
 
-  void _openDropdown() {
-    if (_overlayEntry != null) return;
-    _filtered = widget.inventoryItems;
-    setState(() => _showSearch = true);
-
-    // rootOverlay: true — escapes modal bottom-sheet overlay scope so
-    // the dropdown sits in the root app overlay and receives all pointer events
-    final overlay = Overlay.of(context, rootOverlay: true);
-    _overlayEntry = OverlayEntry(builder: (ctx) => _buildOverlay(ctx));
-    overlay.insert(_overlayEntry!);
-
-    Future.delayed(const Duration(milliseconds: 80), () {
-      if (mounted) _searchFocus.requestFocus();
-    });
-  }
-
-  void _closeDropdown() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-    if (mounted) {
-      setState(() => _showSearch = false);
-      _searchCtrl.clear();
-      _filtered = widget.inventoryItems;
-    }
-    _searchFocus.unfocus();
-  }
-
-  void _selectItem(InventoryItem item) {
-    widget.rowCtrl.selectedItem = item;
-    widget.rowCtrl.priceCtrl.text = item.unitPrice.toStringAsFixed(0);
-    _closeDropdown();
-    if (mounted) setState(() {});
-    widget.onChanged();
-  }
-
-  Widget _buildOverlay(BuildContext ctx) {
-    // Get position of the material field anchor
-    final renderBox = _materialKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return const SizedBox.shrink();
-
-    final offset = renderBox.localToGlobal(Offset.zero);
-    final size   = renderBox.size;
-
-    // Screen dimensions — use ctx (overlay context) not the widget context
-    final screenH = MediaQuery.of(ctx).size.height;
-    const dropH   = 300.0;
-
-    // Show below if space, else above
-    final showBelow = (offset.dy + size.height + dropH) < screenH;
-    final top    = showBelow ? offset.dy + size.height + 4 : null;
-    final bottom = showBelow ? null : screenH - offset.dy + 4;
-
-    return Stack(
-      children: [
-        // ── transparent backdrop — closes dropdown on outside tap ──────────
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _closeDropdown,
-            child: const SizedBox.expand(),
-          ),
-        ),
-        // ── dropdown panel — Material is opaque, backdrop won't fire ─────────
-        Positioned(
-          left:  offset.dx,
-          width: size.width.clamp(200.0, 400.0),
-          top:   top,
-          bottom: bottom,
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(10),
-            color: Colors.white,
-            child: Container(
-              constraints: const BoxConstraints(maxHeight: dropH),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: AppTheme.salesColor.withValues(alpha: 0.4)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                    // ── search field ──────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: TextField(
-                        controller: _searchCtrl,
-                        focusNode: _searchFocus,
-                        onChanged: _applySearch,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: '\u0627\u0628\u062d\u062b \u0628\u0627\u0633\u0645 \u0627\u0644\u0645\u0627\u062f\u0629...',
-                          hintStyle: const TextStyle(fontSize: 12),
-                          prefixIcon:
-                              const Icon(Icons.search_rounded, size: 18),
-                          suffixIcon: _searchCtrl.text.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear, size: 15),
-                                  onPressed: () {
-                                    _searchCtrl.clear();
-                                    _applySearch('');
-                                  },
-                                )
-                              : null,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(
-                                color: AppTheme.salesColor
-                                    .withValues(alpha: 0.4)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                                color: AppTheme.salesColor, width: 1.5),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    // ── results ───────────────────────────────────────────
-                    Flexible(
-                      child: _filtered.isEmpty
-                          ? const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Text(
-                                '\u0644\u0627 \u062a\u0648\u062c\u062f \u0646\u062a\u0627\u0626\u062c',
-                                style: TextStyle(
-                                    fontSize: 12, color: AppTheme.textGrey),
-                                textAlign: TextAlign.center,
-                              ),
-                            )
-                          : ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: _filtered.length,
-                              itemBuilder: (_, idx) {
-                                final item  = _filtered[idx];
-                                final isSel =
-                                    widget.rowCtrl.selectedItem?.id == item.id;
-                                final hasStock = item.quantity > 0;
-                                return GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => _selectItem(item),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 9),
-                                    decoration: BoxDecoration(
-                                      color: isSel
-                                          ? AppTheme.salesColor
-                                              .withValues(alpha: 0.08)
-                                          : Colors.white,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                item.itemName,
-                                                style: TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: isSel
-                                                      ? FontWeight.bold
-                                                      : FontWeight.w500,
-                                                  color: AppTheme.textDark,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                '\u0633\u0639\u0631 \u0627\u0644\u0628\u064a\u0639: ${item.unitPrice.toStringAsFixed(0)} IQD',
-                                                style: const TextStyle(
-                                                    fontSize: 11,
-                                                    color: AppTheme.textGrey),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 7, vertical: 3),
-                                          decoration: BoxDecoration(
-                                            color: hasStock
-                                                ? Colors.green.shade50
-                                                : Colors.red.shade50,
-                                            borderRadius:
-                                                BorderRadius.circular(6),
-                                            border: Border.all(
-                                              color: hasStock
-                                                  ? Colors.green.shade300
-                                                  : Colors.red.shade300,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            '${item.quantity.toStringAsFixed(0)} ${item.unit}',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                              color: hasStock
-                                                  ? Colors.green.shade700
-                                                  : Colors.red.shade700,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ),
-      ],
+    final selected = await showDialog<InventoryItem>(
+      context: context,
+      barrierColor: Colors.black26,
+      builder: (dctx) => _PickerDialog(
+        initialItems: widget.inventoryItems,
+        selectedItem: widget.rowCtrl.selectedItem,
+      ),
     );
+
+    if (selected != null && mounted) {
+      widget.rowCtrl.selectedItem = selected;
+      widget.rowCtrl.priceCtrl.text = selected.unitPrice.toStringAsFixed(0);
+      setState(() {});
+      widget.onChanged();
+    }
   }
 
   @override
@@ -2555,24 +2332,19 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
     );
   }
 
-  // ── material selector (uses Overlay) ─────────────────────────────────────
+  // ── material selector (opens picker dialog) ──────────────────────────────
   Widget _materialInput(InventoryItem? sel, double fSize, double fldH) {
     return GestureDetector(
-      onTap: () => _showSearch ? _closeDropdown() : _openDropdown(),
+      onTap: _openPicker,
       child: Container(
-        key: _materialKey,   // ← moved here: Container always has a reliable RenderBox
+        key: _materialKey,
         height: fldH,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: _showSearch
-              ? AppTheme.salesColor.withValues(alpha: 0.04)
-              : (sel != null ? const Color(0xFFF9FAFB) : const Color(0xFFFFF8F0)),
+          color: sel != null ? const Color(0xFFF9FAFB) : const Color(0xFFFFF8F0),
           borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: _showSearch
-                ? AppTheme.salesColor
-                : (sel != null ? const Color(0xFFDDE1EA) : Colors.orange.shade300),
-            width: _showSearch ? 1.5 : 1,
+            color: sel != null ? const Color(0xFFDDE1EA) : Colors.orange.shade300,
           ),
         ),
         child: Row(
@@ -2590,9 +2362,9 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
               ),
             ),
             Icon(
-              _showSearch ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              Icons.expand_more_rounded,
               size: fSize + 2,
-              color: _showSearch ? AppTheme.salesColor : AppTheme.textGrey,
+              color: AppTheme.textGrey,
             ),
           ],
         ),
@@ -2719,3 +2491,232 @@ class _ItemRowWidgetState extends State<_ItemRowWidget> {
 
 
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standalone picker dialog — completely outside any overlay scope
+// ─────────────────────────────────────────────────────────────────────────────
+class _PickerDialog extends StatefulWidget {
+  final List<InventoryItem> initialItems;
+  final InventoryItem?      selectedItem;
+
+  const _PickerDialog({
+    required this.initialItems,
+    required this.selectedItem,
+  });
+
+  @override
+  State<_PickerDialog> createState() => _PickerDialogState();
+}
+
+class _PickerDialogState extends State<_PickerDialog> {
+  late List<InventoryItem> _filtered;
+  final _ctrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _filtered = List.from(widget.initialItems);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _search(String q) {
+    setState(() {
+      _filtered = q.isEmpty
+          ? List.from(widget.initialItems)
+          : widget.initialItems
+              .where((it) =>
+                  it.itemName.toLowerCase().contains(q.toLowerCase()))
+              .toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── header ────────────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.salesColor.withValues(alpha: 0.08),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(14)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.inventory_2_outlined,
+                      color: AppTheme.salesColor, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    '\u0627\u062e\u062a\u0631 \u0645\u0627\u062f\u0629 \u0645\u0646 \u0627\u0644\u0645\u062e\u0632\u0648\u0646',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.salesColor,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Icon(Icons.close_rounded,
+                        size: 20, color: AppTheme.textGrey),
+                  ),
+                ],
+              ),
+            ),
+            // ── search ────────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                controller: _ctrl,
+                autofocus: true,
+                onChanged: _search,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText:
+                      '\u0627\u0628\u062d\u062b \u0628\u0627\u0633\u0645 \u0627\u0644\u0645\u0627\u062f\u0629...',
+                  hintStyle: const TextStyle(fontSize: 12),
+                  prefixIcon:
+                      const Icon(Icons.search_rounded, size: 18),
+                  suffixIcon: _ctrl.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 15),
+                          onPressed: () {
+                            _ctrl.clear();
+                            _search('');
+                          },
+                        )
+                      : null,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 8),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                        color:
+                            AppTheme.salesColor.withValues(alpha: 0.4)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(
+                        color: AppTheme.salesColor, width: 1.5),
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            // ── list ──────────────────────────────────────────────────────
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.45,
+              ),
+              child: _filtered.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        '\u0644\u0627 \u062a\u0648\u062c\u062f \u0646\u062a\u0627\u0626\u062c',
+                        style: TextStyle(
+                            fontSize: 13, color: AppTheme.textGrey),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _filtered.length,
+                      itemBuilder: (_, idx) {
+                        final item  = _filtered[idx];
+                        final isSel =
+                            widget.selectedItem?.id == item.id;
+                        final hasStock = item.quantity > 0;
+                        return InkWell(
+                          onTap: () => Navigator.of(context).pop(item),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                            color: isSel
+                                ? AppTheme.salesColor
+                                    .withValues(alpha: 0.08)
+                                : null,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.itemName,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: isSel
+                                              ? FontWeight.bold
+                                              : FontWeight.w500,
+                                          color: AppTheme.textDark,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '\u0633\u0639\u0631 \u0627\u0644\u0628\u064a\u0639: ${item.unitPrice.toStringAsFixed(0)} IQD',
+                                        style: const TextStyle(
+                                            fontSize: 11,
+                                            color: AppTheme.textGrey),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: hasStock
+                                        ? Colors.green.shade50
+                                        : Colors.red.shade50,
+                                    borderRadius:
+                                        BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: hasStock
+                                          ? Colors.green.shade300
+                                          : Colors.red.shade300,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '${item.quantity.toStringAsFixed(0)} ${item.unit}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: hasStock
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                    ),
+                                  ),
+                                ),
+                                if (isSel) ...[
+                                  const SizedBox(width: 6),
+                                  Icon(Icons.check_circle_rounded,
+                                      size: 16,
+                                      color: AppTheme.salesColor),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
